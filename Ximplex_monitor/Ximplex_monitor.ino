@@ -1,66 +1,87 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
-// #include <WiFiClient.h>
-
 //modbusRTU libs
-#include <ModbusRTU.h>
+#include <ModbusMaster.h>
 
-ModbusRTU RTU_SLAVE;
-#define PIN_RX2 16
-#define PIN_TX2 17
-#define PIN_EN 4
-#define SLAVE_ID 125
+ModbusMaster node;
+
+#define PIN_RX 16
+#define PIN_TX 17
+
+#define slaveNum 2
+#define PLC_slaveID 1
+#define SERVO_slaveID 2
+#define subTopicNum 10
+#define X0_ADD 0
+#define Y0_ADD 4
+#define M0_ADD 8
+
+#define X_size 8  // 8*8 input
+#define Y_size 8  // 8*8 output
+
+uint16_t d_reg[8][16];
 
 //credential
 const char* ssid = "Flinkone 1-2.4G";
 const char* password = "ff112335";
 const char* mqtt_broker = "kit.flinkone.com";
 const int mqtt_port = 1883;  //unencrypt
-// const char* mqtt_username = "Flink1";
-// const char* mqtt_password = "Fff11111";
 
-char* X_status = "kit/ut_0001/X_status";
+//topics
+char* KIT_topic = "kit";
+char* UT_case = "/UT_0002";
+// char* system_status = "/sys_v2";
+char* X_status = "/sys_v1/X_status";
+char* Y_status = "/sys_v1/Y_status";
+char* M_status = "/sys_v1/M_status";
 
-uint16_t m_data[5];
-uint8_t publish_payload[2];
-String lastTopic = "";
-String lastPayload = "";
+char* SERVO_status = "/servo/status";
+char* SERVO_ALM = "/servo/alarm";
+// char* SERVO_toque =
+// char* SERVO_speed =
+
+typedef struct {
+  String topic;
+  String payload;
+} msg;
+msg sub_buff[subTopicNum];
+
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
+SemaphoreHandle_t mqttMutex;  // Mutex to protect MQTT client
+QueueHandle_t pubQueue = NULL;
+
+enum read_state {
+  PLC,
+  SERVO_STATUS,
+  SERVO_ALARM
+};
+
+read_state curr_slave = PLC;
+read_state last_slave = PLC;
+
+String X_last_incoming;
+String Y_last_incoming;
+uint32_t ChangeSlaveInterval = 50;
+String X_publish_buff;
+String Y_publish_buff;
 
 void setupMQTT() {
   mqttClient.setServer(mqtt_broker, mqtt_port);
-  mqttClient.setCallback(callback);
+  // mqttClient.setCallback(callback);
 }
 
-void endian(uint16_t data, uint8_t* payload) {
-  payload[0] = (data >> 8) & 0xFF;  // High byte
-  payload[1] = data & 0xFF;         // Low byte
-}
-
-
-void callback(char* topic, byte* payload, unsigned int length) {
-  String message;
-  for (int i = 0; i < length; i++) message += (char)payload[i];
-  lastTopic = topic;
-  lastPayload = message;
-}
-
-void publishMqtt(String msg, char* topic) {
-  Serial.print("......publishing.....");
-  Serial.println(msg);
-  int debug = mqttClient.publish(topic, msg.c_str(), true);  //(topic, payload, [length], [retained])
-  if (debug) {
-    Serial.println("Publish Success");
-  } else {
-    // Clear All Bypass and Command
-    Serial.println("Publish Fail");
-  }
-}
+// void callback(char* topic, byte* payload, unsigned int length) {
+//   String message;
+//   String topicStr = String(topic);
+//   for (int i = 0; i < length; i++) message += (char)payload[i];
+//   for (int i = 0; i < subTopicNum; i++) {
+//     if (topicStr == sub_msg[i].topic) sub_msg[i].payload = message;
+//   }
+// }
 
 void wifiConnect() {
-  // We start by connecting to a WiFi network
   Serial.println();
   Serial.println();
   Serial.print("Connecting to ");
@@ -76,12 +97,10 @@ void wifiConnect() {
     }
     counter += 1;
   }
-
   Serial.println("");
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
-  //end Wifi connect
 }
 
 void reconnect() {
@@ -104,109 +123,160 @@ void reconnect() {
   }
 }
 
-uint16_t cbWrite(TRegister* reg, uint16_t val) {
-  // if (lastSVal != val) {
-  //   lastSVal = val;
-  //   Serial.println(String("HregSet val (from STM32):") + String(val));
-  // }
-  reg->value = val;
-  return val;
+void publishMqtt(const char* topic, const char* msg) {
+  if (xSemaphoreTake(mqttMutex, portMAX_DELAY) == pdTRUE) {
+    if (mqttClient.connected()) {
+      bool result = mqttClient.publish(topic, msg, true);
+      if (result) {
+        Serial.println("publish success");
+      } else {
+        Serial.println("publish fail");
+      }
+      // Serial.printf("Pub: %s -> %s\n", topic, msg);
+    }
+    xSemaphoreGive(mqttMutex);
+  }
 }
 
-uint16_t cbRead(TRegister* reg, uint16_t val) {
-  reg->value = val;
-  return val;
+
+void vReconnectTask(void* pvParams) {
+  for (;;) {
+    if (WiFi.status() == WL_CONNECTED) {
+      // Protect Check/Connect with Mutex
+      if (xSemaphoreTake(mqttMutex, portMAX_DELAY) == pdTRUE) {
+
+        if (!mqttClient.connected()) {
+          Serial.print("MQTT connecting...");
+          if (mqttClient.connect("esp32_client_id")) {
+            Serial.println("connected");
+            // Re-subscribe here if needed
+          } else {
+            Serial.print("failed, rc=");
+            Serial.print(mqttClient.state());
+          }
+        }
+
+        // IMPORTANT: loop() must be called frequently to maintain connection
+        if (mqttClient.connected()) {
+          mqttClient.loop();
+        }
+
+        xSemaphoreGive(mqttMutex);
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));  // Check every 100ms
+  }
 }
+
+void vPollingTask(void* pvParams) {
+  for (;;) {
+    uint32_t result;
+    switch (curr_slave) {
+      case PLC:
+        node.begin(PLC_slaveID, Serial1);
+        result = node.readHoldingRegisters(X0_ADD, 8);
+        if (result == node.ku8MBSuccess) {
+          d_reg[PLC_slaveID][0] = node.getResponseBuffer(0);
+          d_reg[PLC_slaveID][1] = node.getResponseBuffer(1);
+          d_reg[PLC_slaveID][2] = node.getResponseBuffer(2);
+          d_reg[PLC_slaveID][3] = node.getResponseBuffer(3);
+
+          d_reg[PLC_slaveID][4] = node.getResponseBuffer(4);
+          d_reg[PLC_slaveID][5] = node.getResponseBuffer(5);
+          d_reg[PLC_slaveID][6] = node.getResponseBuffer(6);
+          d_reg[PLC_slaveID][7] = node.getResponseBuffer(7);
+
+        } else {
+          Serial.println(result);  // Check this code for timeouts (226) or invalid data (227)
+        }
+        last_slave = PLC;
+        // curr_slave = SERVO;
+        break;
+        // case SERVO:
+        //   break;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+void vPackingTask(void* pvParams) {
+  String X_status_payload;
+  String Y_status_payload;
+  msg X_pub;
+  msg Y_pub;
+  char X_topic[50];
+  char Y_topic[50];
+
+  for (;;) {
+
+    for (int i = 0; i < X_size; i++) {
+      X_status_payload = String(d_reg[PLC_slaveID][i]);
+      if (i != (X_size - 1)) X_status_payload += ",";
+    }
+
+    for (int i = 4; i < Y_size; i++) {
+      Y_status_payload = String(d_reg[PLC_slaveID][i]);
+      if (i != (Y_size - 1)) Y_status_payload += ",";
+    }
+
+    snprintf(X_topic, sizeof(X_topic), "kit/%s%s", UT_case, X_status);
+    X_pub.topic = String(X_topic);
+    X_pub.payload = X_status_payload;
+
+    snprintf(Y_topic, sizeof(Y_topic), "kit/%s%s", UT_case, Y_status);
+    Y_pub.topic = String(Y_topic);
+    Y_pub.payload = Y_status_payload;
+
+    if (X_last_incoming != X_status_payload && Y_last_incoming != Y_status_payload) {
+      xQueueSend(pubQueue, &X_pub, portMAX_DELAY);
+      xQueueSend(pubQueue, &Y_pub, portMAX_DELAY);
+    } else {
+      if (uxQueueMessagesWaiting(pubQueue) == 0) {
+        xQueueSend(pubQueue, &X_pub, portMAX_DELAY);
+        xQueueSend(pubQueue, &Y_pub, portMAX_DELAY);
+      }
+    }
+    X_last_incoming = X_status_payload;
+    Y_last_incoming = Y_status_payload;
+  }
+}
+
+void vPublishTask(void* pvParams) {
+  for (;;) {
+    msg incoming;
+    if (xQueueReceive(pubQueue, &incoming, portMAX_DELAY) == pdPASS) {
+      publishMqtt(incoming.topic.c_str(), incoming.payload.c_str());
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
+
 
 void setup() {
   Serial.begin(115200);
   delay(10);
   wifiConnect();
-
-  Serial1.begin(38400, SERIAL_8E1, 16, 17);
-  RTU_SLAVE.begin(&Serial1);
-  RTU_SLAVE.slave(2);  // Slave ID 1
-
-  //for written by main controller's data
-  RTU_SLAVE.addHreg(0x0000, 0);
-  RTU_SLAVE.onSetHreg(0x0000, cbWrite);
-  RTU_SLAVE.onGetHreg(0x0000, cbRead);
-  // WiFi.begin(ssid, password);
-  // while (WiFi.status() != WL_CONNECTED) {
-  //   delay(1000);
-  //   Serial.println("Connecting to WiFi..");
-  // }
-
-  // esp_reset_reason_t reason = esp_reset_reason();
-  // Serial.printf("[BOOT] Reset reason: %d\n", reason);
-  // Hreg_setting_call(RTU_SLAVE, SLAVE_ID, PIN_EN, PIN_RX2, PIN_TX2, H_LIM);
-  // AutoReset_init(1440);
+  Serial1.begin(38400, SERIAL_8E1, PIN_RX, PIN_TX);
+  node.begin(PLC_slaveID, Serial1);
 
   // wifiClient.setInsecure();
   Serial.println(WiFi.localIP());
   setupMQTT();
+
+  for (int i = 0; i < subTopicNum; i++) {
+    sub_buff[i].topic = "";
+    sub_buff[i].payload = "";
+  }
+  mqttMutex = xSemaphoreCreateMutex();
+  pubQueue = xQueueCreate(20, sizeof(msg));
+
+  xTaskCreate(vPollingTask, "PollingTask", 2048, NULL, 3, NULL);
+  xTaskCreate(vReconnectTask, "ReconnectTask", 1024, NULL, 3, NULL);
+  xTaskCreate(vPackingTask, "ReconnectTask", 4096, NULL, 3, NULL);
+  xTaskCreate(vPublishTask, "PublishTask", 4096, NULL, 3, NULL);
 }
 
 void loop() {
-  String publish_payload = "0x05,0x06,0x07,0x08";
-  RTU_SLAVE.task();
-  if (!mqttClient.connected()) {
-    reconnect();
-  }
-
-
-  // RTU_SLAVE.Hreg(1, 20);
-  // m_data[0] = RTU_SLAVE.Hreg(1);
-  // m_data[1] = RTU_SLAVE.Hreg(2);
-  // m_data[2] = RTU_SLAVE.Hreg(3);
-  // m_data[3] = RTU_SLAVE.Hreg(4);
-  // m_data[4] = RTU_SLAVE.Hreg(5);
-
-  //Hreg[0] used for store alive bit
-
-  // if (lastTopic == "esp32/return_data_1") {
-  //   Serial.print("Responding to ");
-  //   Serial.println(lastTopic);
-
-  //   endian(m_data[0], publish_payload);
-  //   Serial.print("HIGH BITS: ");
-  //   Serial.println(publish_payload[0]);
-  //   Serial.print("LOW BITS: ");
-  //   Serial.println(publish_payload[1]);
-
-  // if (mqttClient.publish("esp32/return_data_1", publish_payload, 2, false)) {
-  //   Serial.println("Publish SUCCESS");
-  // } else {
-  //   Serial.println("Publish FAILED");
-  // }
-  publishMqtt(publish_payload, X_status);
-
-
-  // if (lastTopic == "esp32/return_data_2") {
-  //   Serial.print("Responding to ");
-  //   Serial.println(lastTopic);
-
-  //   endian(m_data[0], publish_payload);
-  //   Serial.print("HIGH BITS: ");
-  //   Serial.println(publish_payload[0]);
-  //   Serial.print("LOW BITS: ");
-  //   Serial.println(publish_payload[1]);
-
-  //   if (mqttClient.publish("esp32/return_data_2", publish_payload, 2, false)) {
-  //     Serial.println("Publish SUCCESS");
-  //   } else {
-  //     Serial.println("Publish FAILED");
-  //   }
-  // }
-
-  // if (lastTopic == "esp32/alive") {
-  //   Serial.print("Responding to ");
-  //   Serial.println(lastTopic);
-  //   uint16_t value = lastPayload.toInt();  // string to uint16_t
-  //   RTU_SLAVE.Hreg(0, value);
-  // }
-  // lastTopic = "";
-  // lastPayload = "";
-  mqttClient.loop();
-  delay(2000);
 }
