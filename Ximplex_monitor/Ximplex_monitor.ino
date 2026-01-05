@@ -41,9 +41,10 @@ char* SERVO_ALM = "/servo/alarm";
 // char* SERVO_speed =
 
 typedef struct {
-  String topic;
-  String payload;
+  char topic[64];
+  char payload[128];
 } msg;
+
 msg sub_buff[subTopicNum];
 
 
@@ -200,45 +201,90 @@ void vPollingTask(void* pvParams) {
   }
 }
 
+// void vPackingTask(void* pvParams) {
+//   String X_status_payload;
+//   String Y_status_payload;
+//   msg X_pub;
+//   msg Y_pub;
+//   char X_topic[50];
+//   char Y_topic[50];
+
+//   for (;;) {
+
+//     for (int i = 0; i < X_size; i++) {
+//       X_status_payload = String(d_reg[PLC_slaveID][i]);
+//       if (i != (X_size - 1)) X_status_payload += ",";
+//     }
+
+//     for (int i = 4; i < Y_size; i++) {
+//       Y_status_payload = String(d_reg[PLC_slaveID][i]);
+//       if (i != (Y_size - 1)) Y_status_payload += ",";
+//     }
+
+//     snprintf(X_topic, sizeof(X_topic), "kit/%s%s", UT_case, X_status);
+//     X_pub.topic = String(X_topic);
+//     X_pub.payload = X_status_payload;
+
+//     snprintf(Y_topic, sizeof(Y_topic), "kit/%s%s", UT_case, Y_status);
+//     Y_pub.topic = String(Y_topic);
+//     Y_pub.payload = Y_status_payload;
+
+//     if (X_last_incoming != X_status_payload && Y_last_incoming != Y_status_payload) {
+//       xQueueSend(pubQueue, &X_pub, portMAX_DELAY);
+//       xQueueSend(pubQueue, &Y_pub, portMAX_DELAY);
+//     } else {
+//       if (uxQueueMessagesWaiting(pubQueue) == 0) {
+//         xQueueSend(pubQueue, &X_pub, portMAX_DELAY);
+//         xQueueSend(pubQueue, &Y_pub, portMAX_DELAY);
+//       }
+//     }
+//     X_last_incoming = X_status_payload;
+//     Y_last_incoming = Y_status_payload;
+//   }
+// }
+
 void vPackingTask(void* pvParams) {
-  String X_status_payload;
-  String Y_status_payload;
+  char X_status_payload[128];
+  char Y_status_payload[128];
   msg X_pub;
   msg Y_pub;
-  char X_topic[50];
-  char Y_topic[50];
 
   for (;;) {
 
+    // ----- Pack X -----
+    X_status_payload[0] = '\0';
     for (int i = 0; i < X_size; i++) {
-      X_status_payload = String(d_reg[PLC_slaveID][i]);
-      if (i != (X_size - 1)) X_status_payload += ",";
+      char buf[8];
+      snprintf(buf, sizeof(buf), "%u", d_reg[PLC_slaveID][i]);
+      strcat(X_status_payload, buf);
+      if (i != (X_size - 1)) strcat(X_status_payload, ",");
     }
 
-    for (int i = 4; i < Y_size; i++) {
-      Y_status_payload = String(d_reg[PLC_slaveID][i]);
-      if (i != (Y_size - 1)) Y_status_payload += ",";
+    // ----- Pack Y -----
+    Y_status_payload[0] = '\0';
+    for (int i = 4; i < Y_size + 4; i++) {
+      char buf[8];
+      snprintf(buf, sizeof(buf), "%u", d_reg[PLC_slaveID][i]);
+      strcat(Y_status_payload, buf);
+      if (i != (Y_size - 1)) strcat(Y_status_payload, ",");
     }
 
-    snprintf(X_topic, sizeof(X_topic), "kit/%s%s", UT_case, X_status);
-    X_pub.topic = String(X_topic);
-    X_pub.payload = X_status_payload;
+    // ----- Topic -----
+    snprintf(X_pub.topic, sizeof(X_pub.topic),
+             "kit/%s%s", UT_case, X_status);
 
-    snprintf(Y_topic, sizeof(Y_topic), "kit/%s%s", UT_case, Y_status);
-    Y_pub.topic = String(Y_topic);
-    Y_pub.payload = Y_status_payload;
+    snprintf(Y_pub.topic, sizeof(Y_pub.topic),
+             "kit/%s%s", UT_case, Y_status);
 
-    if (X_last_incoming != X_status_payload && Y_last_incoming != Y_status_payload) {
-      xQueueSend(pubQueue, &X_pub, portMAX_DELAY);
-      xQueueSend(pubQueue, &Y_pub, portMAX_DELAY);
-    } else {
-      if (uxQueueMessagesWaiting(pubQueue) == 0) {
-        xQueueSend(pubQueue, &X_pub, portMAX_DELAY);
-        xQueueSend(pubQueue, &Y_pub, portMAX_DELAY);
-      }
-    }
-    X_last_incoming = X_status_payload;
-    Y_last_incoming = Y_status_payload;
+    // ----- Payload -----
+    strncpy(X_pub.payload, X_status_payload, sizeof(X_pub.payload));
+    strncpy(Y_pub.payload, Y_status_payload, sizeof(Y_pub.payload));
+
+    // ----- Send Queue -----
+    xQueueSend(pubQueue, &X_pub, portMAX_DELAY);
+    xQueueSend(pubQueue, &Y_pub, portMAX_DELAY);
+
+    vTaskDelay(pdMS_TO_TICKS(200));
   }
 }
 
@@ -246,7 +292,8 @@ void vPublishTask(void* pvParams) {
   for (;;) {
     msg incoming;
     if (xQueueReceive(pubQueue, &incoming, portMAX_DELAY) == pdPASS) {
-      publishMqtt(incoming.topic.c_str(), incoming.payload.c_str());
+      // publishMqtt(incoming.topic.c_str(), incoming.payload.c_str());
+      publishMqtt(incoming.topic, incoming.payload);
     }
 
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -265,15 +312,15 @@ void setup() {
   Serial.println(WiFi.localIP());
   setupMQTT();
 
-  for (int i = 0; i < subTopicNum; i++) {
-    sub_buff[i].topic = "";
-    sub_buff[i].payload = "";
-  }
+  // for (int i = 0; i < subTopicNum; i++) {
+  //   sub_buff[i].topic = "";
+  //   sub_buff[i].payload = "";
+  // }
   mqttMutex = xSemaphoreCreateMutex();
   pubQueue = xQueueCreate(20, sizeof(msg));
 
   xTaskCreate(vPollingTask, "PollingTask", 2048, NULL, 3, NULL);
-  xTaskCreate(vReconnectTask, "ReconnectTask", 1024, NULL, 3, NULL);
+  xTaskCreate(vReconnectTask, "ReconnectTask", 4096, NULL, 3, NULL);
   xTaskCreate(vPackingTask, "ReconnectTask", 4096, NULL, 3, NULL);
   xTaskCreate(vPublishTask, "PublishTask", 4096, NULL, 3, NULL);
 }
