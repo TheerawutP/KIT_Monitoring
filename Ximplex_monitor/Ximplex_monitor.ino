@@ -14,12 +14,11 @@ ModbusMaster node;
 #define subTopicNum 10
 #define X0_ADD 0
 #define Y0_ADD 4
-#define M0_ADD 8
 
 #define X_size 8  // 8*8 input
 #define Y_size 8  // 8*8 output
 
-uint16_t d_reg[8][16];
+uint16_t hreg[8][16];
 
 //credential
 const char* ssid = "Flinkone 1-2.4G";
@@ -34,7 +33,6 @@ char* UT_case = "/UT_0002";
 char* X_status = "/sys_v1/X_status";
 char* Y_status = "/sys_v1/Y_status";
 char* M_status = "/sys_v1/M_status";
-
 char* SERVO_status = "/servo/status";
 char* SERVO_ALM = "/servo/alarm";
 // char* SERVO_toque =
@@ -44,12 +42,12 @@ typedef struct {
   char topic[64];
   char payload[128];
 } msg;
-
 msg sub_buff[subTopicNum];
-
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
+
+SemaphoreHandle_t hregMutex;
 SemaphoreHandle_t mqttMutex;  // Mutex to protect MQTT client
 QueueHandle_t pubQueue = NULL;
 
@@ -64,9 +62,10 @@ read_state last_slave = PLC;
 
 String X_last_incoming;
 String Y_last_incoming;
-uint32_t ChangeSlaveInterval = 50;
 String X_publish_buff;
 String Y_publish_buff;
+
+uint32_t ChangeSlaveInterval = 50;
 
 void setupMQTT() {
   mqttClient.setServer(mqtt_broker, mqtt_port);
@@ -169,39 +168,42 @@ void vReconnectTask(void* pvParams) {
   }
 }
 
+
 void vPollingTask(void* pvParams) {
   for (;;) {
     uint32_t result;
-    switch (curr_slave) {
-      case PLC:
-        node.begin(PLC_slaveID, Serial1);
-        result = node.readHoldingRegisters(X0_ADD, 8);
-        if (result == node.ku8MBSuccess) {
-          d_reg[PLC_slaveID][0] = node.getResponseBuffer(0);
-          d_reg[PLC_slaveID][1] = node.getResponseBuffer(1);
-          d_reg[PLC_slaveID][2] = node.getResponseBuffer(2);
-          d_reg[PLC_slaveID][3] = node.getResponseBuffer(3);
+    if (xSemaphoreTake(hregMutex, portMAX_DELAY) == pdTRUE) {
+      switch (curr_slave) {
+        case PLC:
+          node.begin(PLC_slaveID, Serial1);
+          result = node.readHoldingRegisters(X0_ADD, 8);  //start hreg address, num of read
+          if (result == node.ku8MBSuccess) {
+            hreg[PLC_slaveID][0] = node.getResponseBuffer(0);
+            hreg[PLC_slaveID][1] = node.getResponseBuffer(1);
+            hreg[PLC_slaveID][2] = node.getResponseBuffer(2);
+            hreg[PLC_slaveID][3] = node.getResponseBuffer(3);
 
-          d_reg[PLC_slaveID][4] = node.getResponseBuffer(4);
-          d_reg[PLC_slaveID][5] = node.getResponseBuffer(5);
-          d_reg[PLC_slaveID][6] = node.getResponseBuffer(6);
-          d_reg[PLC_slaveID][7] = node.getResponseBuffer(7);
-
-        } else {
-          Serial.println(result);  // Check this code for timeouts (226) or invalid data (227)
-        }
-        last_slave = PLC;
-        // curr_slave = SERVO;
-        break;
-        // case SERVO:
-        //   break;
+            hreg[PLC_slaveID][4] = node.getResponseBuffer(4);
+            hreg[PLC_slaveID][5] = node.getResponseBuffer(5);
+            hreg[PLC_slaveID][6] = node.getResponseBuffer(6);
+            hreg[PLC_slaveID][7] = node.getResponseBuffer(7);
+            xSemaphoreGive(hregMutex);
+          } else {
+            Serial.println(result);  // Check this code for timeouts (226) or invalid data (227)
+          }
+          last_slave = PLC;
+          // curr_slave = SERVO;
+          break;
+          // case SERVO:
+          //   break;
+      }
     }
-
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 
 // void vPackingTask(void* pvParams) {
+
 //   String X_status_payload;
 //   String Y_status_payload;
 //   msg X_pub;
@@ -212,12 +214,12 @@ void vPollingTask(void* pvParams) {
 //   for (;;) {
 
 //     for (int i = 0; i < X_size; i++) {
-//       X_status_payload = String(d_reg[PLC_slaveID][i]);
+//       X_status_payload = String(hreg[PLC_slaveID][i]);
 //       if (i != (X_size - 1)) X_status_payload += ",";
 //     }
 
 //     for (int i = 4; i < Y_size; i++) {
-//       Y_status_payload = String(d_reg[PLC_slaveID][i]);
+//       Y_status_payload = String(hreg[PLC_slaveID][i]);
 //       if (i != (Y_size - 1)) Y_status_payload += ",";
 //     }
 
@@ -250,43 +252,45 @@ void vPackingTask(void* pvParams) {
   msg Y_pub;
 
   for (;;) {
+    if (xSemaphoreTake(hregMutex, portMAX_DELAY) == pdTRUE) {
+      // ----- Pack X -----
+      X_status_payload[0] = '\0';
+      for (int i = 0; i < X_size; i++) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%u", hreg[PLC_slaveID][i]);
+        strcat(X_status_payload, buf);
+        if (i != (X_size - 1)) strcat(X_status_payload, ",");
+      }
 
-    // ----- Pack X -----
-    X_status_payload[0] = '\0';
-    for (int i = 0; i < X_size; i++) {
-      char buf[8];
-      snprintf(buf, sizeof(buf), "%u", d_reg[PLC_slaveID][i]);
-      strcat(X_status_payload, buf);
-      if (i != (X_size - 1)) strcat(X_status_payload, ",");
+      // ----- Pack Y -----
+      Y_status_payload[0] = '\0';
+      for (int i = 4; i < Y_size + 4; i++) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%u", hreg[PLC_slaveID][i]);
+        strcat(Y_status_payload, buf);
+        if (i != (Y_size - 1)) strcat(Y_status_payload, ",");
+      }
+
+      // ----- Topic -----
+      snprintf(X_pub.topic, sizeof(X_pub.topic),
+               "kit/%s%s", UT_case, X_status);
+
+      snprintf(Y_pub.topic, sizeof(Y_pub.topic),
+               "kit/%s%s", UT_case, Y_status);
+
+      // ----- Payload -----
+      strncpy(X_pub.payload, X_status_payload, sizeof(X_pub.payload));
+      strncpy(Y_pub.payload, Y_status_payload, sizeof(Y_pub.payload));
+
+      // ----- Send Queue -----
+      xQueueSend(pubQueue, &X_pub, portMAX_DELAY);
+      //xQueueSend(pubQueue, &Y_pub, portMAX_DELAY);
+
+    xSemaphoreGive(hregMutex);
     }
-
-    // ----- Pack Y -----
-    Y_status_payload[0] = '\0';
-    for (int i = 4; i < Y_size + 4; i++) {
-      char buf[8];
-      snprintf(buf, sizeof(buf), "%u", d_reg[PLC_slaveID][i]);
-      strcat(Y_status_payload, buf);
-      if (i != (Y_size - 1)) strcat(Y_status_payload, ",");
-    }
-
-    // ----- Topic -----
-    snprintf(X_pub.topic, sizeof(X_pub.topic),
-             "kit/%s%s", UT_case, X_status);
-
-    snprintf(Y_pub.topic, sizeof(Y_pub.topic),
-             "kit/%s%s", UT_case, Y_status);
-
-    // ----- Payload -----
-    strncpy(X_pub.payload, X_status_payload, sizeof(X_pub.payload));
-    strncpy(Y_pub.payload, Y_status_payload, sizeof(Y_pub.payload));
-
-    // ----- Send Queue -----
-    xQueueSend(pubQueue, &X_pub, portMAX_DELAY);
-    xQueueSend(pubQueue, &Y_pub, portMAX_DELAY);
-
-    vTaskDelay(pdMS_TO_TICKS(200));
   }
 }
+
 
 void vPublishTask(void* pvParams) {
   for (;;) {
@@ -295,7 +299,6 @@ void vPublishTask(void* pvParams) {
       // publishMqtt(incoming.topic.c_str(), incoming.payload.c_str());
       publishMqtt(incoming.topic, incoming.payload);
     }
-
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
@@ -317,11 +320,11 @@ void setup() {
   //   sub_buff[i].payload = "";
   // }
   mqttMutex = xSemaphoreCreateMutex();
+  hregMutex = xSemaphoreCreateMutex();
   pubQueue = xQueueCreate(20, sizeof(msg));
-
   xTaskCreate(vPollingTask, "PollingTask", 2048, NULL, 3, NULL);
   xTaskCreate(vReconnectTask, "ReconnectTask", 4096, NULL, 3, NULL);
-  xTaskCreate(vPackingTask, "ReconnectTask", 4096, NULL, 3, NULL);
+  xTaskCreate(vPackingTask, "PackingTask", 4096, NULL, 3, NULL);
   xTaskCreate(vPublishTask, "PublishTask", 4096, NULL, 3, NULL);
 }
 
