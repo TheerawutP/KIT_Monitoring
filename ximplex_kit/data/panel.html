@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NanoStat
+  </title>
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/css/bootstrap.min.css" rel="stylesheet"
+    integrity="sha384-eOJMYsd53ii+scO/bJGFsiCZc+5NDVN2yr8+0RDqr0Ql0h+rP48ckxlpbzKgwra6" crossorigin="anonymous">
+  <script src='https://cdn.jsdelivr.net/npm/chart.js@3.1.1/dist/chart.min.js'></script>
+  <script type="text/javascript" src="websocketcode.js"></script>
+  <script type="text/javascript" src="button_handle_JS.js"></script>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <!-- <link rel="stylesheet" href="menubarstyle.css"> -->
+  <!-- <link rel="stylesheet" href="CSS-Reset.css"> -->
+  <!-- Google font: -->
+  <link rel="preconnect" href="https://fonts.gstatic.com">
+  <link href="https://fonts.googleapis.com/css2?family=Leckerli+One&display=swap" rel="stylesheet">
+  <!-- Custom style: -->
+  <link rel="stylesheet" href="nanostatstyle.css">
+</head>
+
+
+<body>
+
+  <!-- Navigation bar -->
+  <nav class="navbar navbar-expand-md navbar-dark bg-primary">
+    <div class="container">
+      <!-- <nav class="navbar navbar-expand-md navbar-light"> -->
+      <!-- Brand icon: -->
+      <a href="#" class="navbar-brand" style="font-family: 'Leckerli One', cursive;">NanoStat</a>
+      <!-- Hamburger button: -->
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#toggleMobileMenu"
+        aria-controls="toggleMobileMenu" aria-expanded="false" aria-table="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <!-- Menu items: -->
+      <div class="collapse navbar-collapse" id="toggleMobileMenu">
+        <ul class="navbar-nav ms-auto text-center">
+          <li>
+            <a class="nav-link" href="index.html">Sweep</a>
+          </li>
+          <li>
+            <a class="nav-link" href="setup.html">Setup</a>
+          </li>
+          <li>
+            <a class="nav-link active" href="panel.html">Panel</a>
+          </li>
+          <li>
+            <a class="nav-link" href="download.html">Download</a>
+          </li>
+
+          <li class="nav-item dropdown">
+            <a href="#" class="nav-link dropdown-toggle" id="navbarDropdown" role="button" data-bs-toggle="dropdown"
+              aria-expanded="false">System</a>
+            <ul class="dropdown-menu" aria-labeledby="navbarDropdown">
+              <li><a href="files.html" class="dropdown-item">Files</a></li>
+              <li><a href="wifi.html" class="dropdown-item">Wifi</a></li>
+              <li><a href="firmware.html" class="dropdown-item">Firmware</a></li>
+              <li><a href="reboot.html" class="dropdown-item">Reboot</a></li>
+
+            </ul>
+
+          </li>
+
+
+
+          <li>
+            <a class="nav-link" href="help.html">Help</a>
+          </li>
+          <li>
+            <a class="nav-link" href="about.html">About</a>
+          </li>
+        </ul>
+      </div>
+  </nav>
+
+  <header class="container text-center ">
+    <h1>Control panel</h1>
+    <h2>LMP91000</h2>
+  </header>
+
+
+  <div class="container">
+    <div class="row mybox1">
+      <!-- <div class="col-md p-0 text-center mybox1"> -->
+      <div class="  col-md p-0 ">
+        <h2> Controls </h2>
+
+
+        <!-- Active -->
+        <div class="div mybox6 mx-3">
+          <div class="form-check form-check-inline">
+            <input class="form-check-input p-0 border border-secondary" type="radio" name="m_control_panel_is_active"
+              id="m_control_panel_is_active_id" value="true" >
+            <label class="form-check-label" for="m_control_panel_is_active_id">Active.</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input p-0 border border-secondary" type="radio" name="m_control_panel_is_active"
+              id="m_control_panel_is_inactive_id" value="false" checked>
+            <label class="form-check-label" for="m_control_panel_is_inactive_id">Inactive.</label>
+          </div>
+        </div>
+
+        <!-- 
+        <input type="radio" id="m_control_panel_is_active_id" name="m_control_panel_is_active" value=true>
+        <label for="m_control_panel_is_active_id">Active.</label><br>
+        <input type="radio" id="m_control_panel_is_inactive_id" checked="checked" name="m_control_panel_is_active"
+          value=false>
+        <label for="m_control_panel_is_inactive_id">Inactive.</label><br> -->
+
+
+        <!-- TIA gain -->
+        <div class="div mybox6 mx-3">
+          <div class="form-box ms-5 ms-md-0">
+            <label class="form-label mb-0">TIA gain</label>
+            <select class="form-control p-0 border border-secondary" name="sweep_param_lmpGain" id="lmpGain_id">
+              <option value=7>350 kOhm</option>
+              <option value=6>120 kOhm</option>
+              <option value=5>35 kOhm</option>
+              <option value=4>14 kOhm</option>
+              <option value=3>7 kOhm</option>
+              <option value=2>3.5 kOhm</option>
+              <option value=1>2.75 kOhm</option>
+              <option value=0>External resistor</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="div mybox6 mx-3">
+          <div class="form-box ms-5 ms-md-0">
+            <label class="form-label mb-0">Cell set voltage (mV)</label>
+            <input type="number" class="form-control p-0 border border-secondary" name="cell_voltage"
+              id="cell_voltage_id" value=100 min=-792 max=792>
+          </div>
+        </div>
+
+
+        <div class="div mybox6 mx-3">
+          <div class="form-box ms-5 ms-md-0">
+            <label class="form-label mb-0"># of readings to average per point.</label>
+            <input type="number" class="form-control p-0 border border-secondary"
+              name="num_readings_to_average_per_point" id="num_readings_to_average_per_point_id" value=1 min=1
+              max=1000000>
+          </div>
+        </div>
+
+        <div class="div mybox6 mx-3">
+          <div class="form-box ms-5 ms-md-0">
+            <label class="form-label mb-0">delay between points (ms)</label>
+            <input type="number" class="form-control p-0 border border-secondary" name="delay_between_points_ms"
+              id="delay_between_points_ms_id" value=500 min=1 max=1000>
+          </div>
+        </div>
+
+        <div class="div mybox6 mx-3">
+          <div class="form-box ms-5 ms-md-0">
+            <label class="form-label mb-0">Max # of points to plot</label>
+            <input type="number" class="form-control p-0 border border-secondary" name="max_number_of_points_in_browser"
+              id="max_number_of_points_in_browser_id" value=100 min=1 max=10000>
+          </div>
+        </div>
+
+
+      </div>
+      <div class="col-md  mybox2">
+        <h2>Status</h2>
+
+        <p>Current sweep mode:
+          <span id="sweep_mode_id"> DORMANT</span>
+        </p>
+
+        <!-- determined by set voltage: -->
+        <p>LMP91000 % setting =
+          <span id="m_percentage_id">percent_setting</span>
+        </p>
+        <p>DAC voltage setting (mV) =
+          <span id="m_dacVout_id">DACvoutmV</span>
+        </p>
+        <!-- determined at each point reading: -->
+        <p> ADC average (bits) =
+          <span id="analog_read_avg_bits_id">analog_read_avg_bits</span>
+        </p>
+
+        <p>ADC average (mV) =
+          <span id="analog_read_avg_mV_id">analog_read_avg_mV</span>
+        </p>
+        <!-- for all the points on the browswer plot: -->
+        <p>Average current (microA) =
+          <span id="AVG_current_ID">UNKNOWN</span>
+        </p>
+        <p>Std. dev. current (microA) =
+          <span id="STD_DEV_current_ID">UNKNOWN</span>
+        </p>
+
+      </div>
+
+    </div>
+  </div>
+
+
+
+
+  </div>
+
+  <!-- Scope -->
+  <div class="container mybox3 text-center">
+    <h2>Scope display</h2>
+    <div id="plotly-scope-2yaxis"></div>
+ <textarea id="dataTextbox" rows="10" cols="50">
+      Time(s), Current(μA), Voltage(mV)
+      </textarea>
+        <div id="saveButton">Save Data</div>
+  </div>
+
+    <!-- Page footer -->
+  <!-- <footer class="container text-center myfooter fs-6 fw-lighter pt-3 fst-italic"> -->
+    <footer class="container text-center  fs-6 fw-lighter pt-3 fst-italic">
+      <p>NanoStat Firmware Rev. 1.0 @ BurkeLab 2024</p>
+    </footer>
+
+  <!-- Plotly JS -->
+  <script type="text/javascr" src="plotlyscope.js"></script>
+  <!-- Bootstrap JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/js/bootstrap.bundle.min.js"
+    integrity="sha384-JEW9xMcG8R+pH31jmWH6WWP0WintQrMb4s7ZOdauHnUtxwoG2vI5DkLtS3qm9Ekf"
+    crossorigin="anonymous"></script>
+  <!-- Control panel JS -->
+  <script type="text/javascript" src="websckt_ctl_pan_LMP91000.js"></script>
+ <script>
+    // Get the textbox and button elements
+    var dataTextbox = document.getElementById("dataTextbox");
+    var saveButton = document.getElementById("saveButton");
+
+    // Add a click event listener to the button
+    saveButton.addEventListener("click", function() {
+        var data = dataTextbox.value;
+        // Get the content of the textbox
+        var blob = new Blob([data], { type: 'text/plain;charset=utf-8' });
+        // Create a Blob object
+        var url = URL.createObjectURL(blob);
+        // Create an object URL
+        var link = document.createElement('a');
+        link.href = url;
+        link.download = 'data.txt';
+        // Set the download file name
+        // Simulate clicking the download link
+        link.click();
+        // Revoke the object URL
+        URL.revokeObjectURL(url);
+    });
+</script>
+</body>

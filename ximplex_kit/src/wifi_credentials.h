@@ -1,0 +1,3 @@
+char SSID[] = "";
+char PASSWORD[] = "";
+
