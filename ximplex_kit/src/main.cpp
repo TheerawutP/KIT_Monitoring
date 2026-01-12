@@ -27,7 +27,7 @@ ModbusMaster node;
 
 #define PIN_RX 16
 #define PIN_TX 17
-
+#define WIFI_READY 23
 #define slaveNum 2
 #define PLC_slaveID 1
 #define SERVO_slaveID 2
@@ -81,10 +81,15 @@ enum read_state {
 read_state curr_slave = PLC;
 read_state last_slave = PLC;
 
-String X_status_payload;
-String Y_status_payload;
-String X_prev;
-String Y_prev;
+// String X_status_payload;
+// String Y_status_payload;
+// String X_prev;
+// String Y_prev;
+char X_status_payload[64]; 
+char Y_status_payload[64];
+char X_prev[64] = "";      
+char Y_prev[64] = "";
+
 bool XY_hasChanged = true;
 uint32_t ChangeSlaveInterval = 50;
 
@@ -146,29 +151,68 @@ void reconnect() {
   }
 }
 
-void isChange(String from, uint16_t* data, bool* flag) {
-  X_status_payload = "";
-  Y_status_payload = "";
+// void isChange(String from, uint16_t* data, bool* flag) {
+//   X_status_payload = "";
+//   Y_status_payload = "";
 
-  if (from == "PLC") {
-    for (int i = 0; i < X_size - 4; i++) {
-      X_status_payload += String(data[i]);
-      if (i != (X_size - 5)) X_status_payload += ",";
-    }
+//   if (from == "PLC") {
+//     for (int i = 0; i < X_size - 4; i++) {
+//       X_status_payload += String(data[i]);
+//       if (i != (X_size - 5)) X_status_payload += ",";
+//     }
 
-    for (int i = 4; i < Y_size; i++) {
-      Y_status_payload += String(data[i]);
-      if (i != (Y_size - 1)) Y_status_payload += ",";
-    }
+//     for (int i = 4; i < Y_size; i++) {
+//       Y_status_payload += String(data[i]);
+//       if (i != (Y_size - 1)) Y_status_payload += ",";
+//     }
 
-    if (X_status_payload != X_prev || Y_status_payload != Y_prev) {
+//     if (X_status_payload != X_prev || Y_status_payload != Y_prev) {
+//       *flag = true;
+//       X_prev = X_status_payload;
+//       Y_prev = Y_status_payload;
+
+//       Serial.println("Change Detected!");
+//       Serial.println("X: " + X_status_payload);
+//       Serial.println("Y: " + Y_status_payload);
+//     }
+//   }
+// }
+
+void isChange(const char* from, uint16_t* data, bool* flag) {
+  // We use temporary buffers to format the new data
+  char X_temp[64];
+  char Y_temp[64];
+
+  if (strcmp(from, "PLC") == 0) { // strcmp is the C way to compare char arrays
+    
+    // 1. Format X Data (Indices 0-3)
+    // %d is a placeholder for an integer. 
+    // This line replaces the entire first loop.
+    snprintf(X_temp, sizeof(X_temp), "%d,%d,%d,%d", 
+             data[0], data[1], data[2], data[3]);
+
+    // 2. Format Y Data (Indices 4-7)
+    // This line replaces the entire second loop.
+    snprintf(Y_temp, sizeof(Y_temp), "%d,%d,%d,%d", 
+             data[4], data[5], data[6], data[7]);
+
+    // 3. Compare with previous values
+    // strcmp returns 0 if strings are identical
+    if (strcmp(X_temp, X_prev) != 0 || strcmp(Y_temp, Y_prev) != 0) {
       *flag = true;
-      X_prev = X_status_payload;
-      Y_prev = Y_status_payload;
+
+      // Copy new values to "prev" history
+      // strncpy is safer than strcpy because it respects size
+      strncpy(X_prev, X_temp, sizeof(X_prev));
+      strncpy(Y_prev, Y_temp, sizeof(Y_prev));
+
+      // Update the global payloads
+      strncpy(X_status_payload, X_temp, sizeof(X_status_payload));
+      strncpy(Y_status_payload, Y_temp, sizeof(Y_status_payload));
 
       Serial.println("Change Detected!");
-      Serial.println("X: " + X_status_payload);
-      Serial.println("Y: " + Y_status_payload);
+      Serial.print("X: "); Serial.println(X_status_payload);
+      Serial.print("Y: "); Serial.println(Y_status_payload);
     }
   }
 }
@@ -223,6 +267,7 @@ void vPollingTask(void* pvParams) {
   for (;;) {
     uint32_t result;
     // if (xSemaphoreTake(hregMutex, portMAX_DELAY) == pdTRUE) {
+    digitalWrite(WIFI_READY, HIGH);
     switch (curr_slave) {
       case PLC:
         node.begin(PLC_slaveID, Serial1);
@@ -262,8 +307,8 @@ void vPublishTask(void* pvParams) {
   for (;;) {
     if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE) {
       if (XY_hasChanged == true) {
-        publishMqtt("kit/UT_0003/sys_v1/X_status", X_status_payload.c_str());
-        publishMqtt("kit/UT_0003/sys_v1/Y_status", Y_status_payload.c_str());
+        publishMqtt("kit/UT_0003/sys_v1/X_status", X_status_payload);
+        publishMqtt("kit/UT_0003/sys_v1/Y_status", Y_status_payload);
         XY_hasChanged = false;
       }
       xSemaphoreGive(hasChangedMutex);
@@ -947,7 +992,7 @@ void runWifiPortal()
 
   Serial.println(F("HTTP server started"));
   m_wifitools_server->begin();
-  if (!MDNS.begin("Ximplex_KIT")) // see https://randomnerdtutorials.com/esp32-access-point-ap-web-server/
+  if (!MDNS.begin("keepintouch")) // see https://randomnerdtutorials.com/esp32-access-point-ap-web-server/
   {
     Serial.println("Error setting up MDNS responder !");
     while (1)
@@ -973,7 +1018,7 @@ void runWifiPortal_after_connected_to_WIFI()
 
   Serial.println(F("HTTP server started"));
   m_wifitools_server->begin();
-  if (!MDNS.begin("Ximplex_KIT")) // see https://randomnerdtutorials.com/esp32-access-point-ap-web-server/
+  if (!MDNS.begin("keepintouch")) // see https://randomnerdtutorials.com/esp32-access-point-ap-web-server/
   {
     Serial.println("Error setting up MDNS responder !");
     while (1)
@@ -1519,7 +1564,7 @@ void setup()
   // delay(2000);
 
   //############################# DNS #####################################
-  MDNS.begin("Ximplex_KIT");
+  MDNS.begin("keepintouch");
 
   //############################# WEBSERVER & WIFI #####################################
 
@@ -1549,10 +1594,12 @@ void setup()
   //   sub_buff[i].topic = "";
   //   sub_buff[i].payload = "";
   // }
+
+  pinMode(WIFI_READY, OUTPUT); 
   mqttMutex = xSemaphoreCreateMutex();
   hasChangedMutex = xSemaphoreCreateMutex();
   // pubQueue = xQueueCreate(20, sizeof(msg));
-  xTaskCreate(vPollingTask, "PollingTask", 2048, NULL, 3, NULL);
+  xTaskCreate(vPollingTask, "PollingTask", 4096, NULL, 3, NULL);
   xTaskCreate(vReconnectTask, "ReconnectTask", 4096, NULL, 3, NULL);
   xTaskCreate(vPublishTask, "PublishTask", 4096, NULL, 3, NULL);
   
@@ -1564,22 +1611,21 @@ void setup()
 void loop()
 {
   
-
   m_websocketserver.loop();
 
-  if (m_send_websocket_test_data_in_loop == true) // do things here in loop at full speed
-  {
-    // Pseudocode: xxx_period_in_ms_xxx=period_in_s * 1e3 = (1/freqHz)*1e3
-    if (millis() - last_time_sent_websocket_server > (1000 / m_websocket_send_rate)) // every half second, print
-    {
-      //    sendTimeOverWebsocketJSON();
-      sendValueOverWebsocketJSON(100 * 0.5 * sin(millis() / 1e3)); // value is sine wave of time , frequency 0.5 Hz, amplitude 100.
-      last_time_sent_websocket_server = millis();
-    }
-    // m_microsbefore_websocketsendcalled=micros();
-    // sendTimeOverWebsocketJSON(); // takes 2.5 ms on average, when client is connected, else 45 microseconds...
-    // Serial.println(micros()-m_microsbefore_websocketsendcalled);
-  }
+  // if (m_send_websocket_test_data_in_loop == true) // do things here in loop at full speed
+  // {
+  //   // Pseudocode: xxx_period_in_ms_xxx=period_in_s * 1e3 = (1/freqHz)*1e3
+  //   if (millis() - last_time_sent_websocket_server > (1000 / m_websocket_send_rate)) // every half second, print
+  //   {
+  //     //    sendTimeOverWebsocketJSON();
+  //     sendValueOverWebsocketJSON(100 * 0.5 * sin(millis() / 1e3)); // value is sine wave of time , frequency 0.5 Hz, amplitude 100.
+  //     last_time_sent_websocket_server = millis();
+  //   }
+  //   // m_microsbefore_websocketsendcalled=micros();
+  //   // sendTimeOverWebsocketJSON(); // takes 2.5 ms on average, when client is connected, else 45 microseconds...
+  //   // Serial.println(micros()-m_microsbefore_websocketsendcalled);
+  // }
 
-  last_time_loop_called = millis();
+  // last_time_loop_called = millis();
 }
