@@ -91,7 +91,7 @@ char X_prev[64] = "";
 char Y_prev[64] = "";
 
 bool XY_hasChanged = true;
-uint32_t ChangeSlaveInterval = 50;
+uint32_t ChangeSlaveInterval = 500;
 
 ////////////////////////////////////end of main program declarations///////////
 
@@ -299,7 +299,7 @@ void vPollingTask(void* pvParams) {
 
     //   xSemaphoreGive(hregMutex);
     // }
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(ChangeSlaveInterval));
   }
 }
 
@@ -313,7 +313,7 @@ void vPublishTask(void* pvParams) {
       }
       xSemaphoreGive(hasChangedMutex);
     }
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 
