@@ -127,64 +127,7 @@ float SET_DownDuration = 18.0; // รับจาก name="down_param"
 int SET_Param4 = 0;            // รับจาก name="alice_param"
 int SET_Param5 = 0;            // รับจาก name="bob_param"
 
-void runOTA()
-{
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    Serial.println("Cannot run OTA: WiFi not connected");
-    return;
-  }
 
-  // เช็ค RAM
-  uint32_t freeHeap = ESP.getFreeHeap();
-  Serial.printf("Free Heap before OTA: %u bytes\n", freeHeap);
-  
-  if (freeHeap < 20000) {
-    Serial.println("Error: Not enough memory for OTA (Need > 20KB)");
-    return;
-  }
-
-  Serial.println("Starting OTA from GitHub...");
-  
-  // สร้าง Client บน Heap (นี่คือจุดสำคัญที่แก้ Crash)
-  WiFiClientSecure *client = new WiFiClientSecure;
-
-  if (client) {
-    client->setInsecure(); // ไม่ตรวจสอบ Certificate
-    client->setTimeout(12000); // เพิ่มเวลา timeout
-
-    // *** ลบบรรทัด setRxBufferSize ออกแล้วครับ ***
-
-    // httpUpdate.setLedPin(2, LOW); 
-    httpUpdate.rebootOnUpdate(false); 
-
-    Serial.println("Downloading firmware...");
-    
-    // ส่งค่า *client (Pointer) เข้าไป
-    t_httpUpdate_return ret = httpUpdate.update(*client, firmwareURL);
-
-    switch (ret)
-    {
-    case HTTP_UPDATE_FAILED:
-      Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
-      break;
-
-    case HTTP_UPDATE_NO_UPDATES:
-      Serial.println("HTTP_UPDATE_NO_UPDATES");
-      break;
-
-    case HTTP_UPDATE_OK:
-      Serial.println("HTTP_UPDATE_OK! Rebooting in 3 seconds...");
-      delay(3000);
-      ESP.restart();
-      break;
-    }
-
-    delete client; // คืนหน่วยความจำ
-  } else {
-    Serial.println("Failed to allocate WiFiClientSecure!");
-  }
-}
 
 void callback(char *topic, byte *payload, unsigned int length)
 {
@@ -205,11 +148,7 @@ void callback(char *topic, byte *payload, unsigned int length)
     Serial.println(message);
   }
 
-  if(String(topic) == "kit/ota")
-  {
-    Serial.println("OTA command received");
-    shouldUpdateFirmware = true;
-  }
+
 }
 
 void setupMQTT()
@@ -1290,21 +1229,4 @@ void loop()
 
   m_websocketserver.loop();
 
-
-  if (shouldUpdateFirmware) {
-    Serial.println("Preparing for OTA...");
-
-    if (pollingTaskHandle != NULL) vTaskSuspend(pollingTaskHandle);
-    if (publishTaskHandle != NULL) vTaskSuspend(publishTaskHandle);
-    
-    delay(200); 
-
-    runOTA(); 
-
-    Serial.println("OTA Failed! Resuming tasks...");
-    shouldUpdateFirmware = false; 
-    
-    if (pollingTaskHandle != NULL) vTaskResume(pollingTaskHandle);
-    if (publishTaskHandle != NULL) vTaskResume(publishTaskHandle);
-  }
 }
