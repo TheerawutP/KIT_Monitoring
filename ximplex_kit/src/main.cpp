@@ -11,14 +11,15 @@
 #include "DNSServer.h"
 #include <PubSubClient.h>
 #include <ModbusMaster.h>
+#include <ArduinoJson.h>
 
 #include <WiFiClientSecure.h>
-#include <HTTPUpdate.h>
+// #include <HTTPUpdate.h>
 
 #include <Preferences.h>
 
-const char *firmwareURL = "https://raw.githubusercontent.com/TheerawutP/test_OTA/main/MCU.ino.bin";
-bool shouldUpdateFirmware = false; 
+// const char *firmwareURL = "https://raw.githubusercontent.com/TheerawutP/test_OTA/main/MCU.ino.bin";
+// bool shouldUpdateFirmware = false;
 TaskHandle_t pollingTaskHandle = NULL;
 TaskHandle_t publishTaskHandle = NULL;
 
@@ -46,29 +47,14 @@ const char *mqtt_broker = "kit.flinkone.com";
 const int mqtt_port = 1883; // unencrypt
 
 // topics
-char *KIT_topic = "kit";
-char *UT_case = "/UT_0000";
-char *system_status = "/sys_v1";
-char *X_status = "/sys_v1/X_status";
-char *Y_status = "/sys_v1/Y_status";
-char *SERVO_status = "/servo/status";
-char *SERVO_ALM = "/servo/alarm";
+// publish topics
 
-char x_mqtt_topic[64];
-char y_mqtt_topic[64];
-
-// subscription topics
-char *KIT_listenToAll = "kit/#";
-
-// char* SERVO_toque =
-// char* SERVO_speed =
-
-// typedef struct {
-//   char from[8];
-//   uint16_t* data;
-//   size_t len;
-// } msg;
-// msg sub_buff[subTopicNum];
+char X_pTopic[128] = "kit/UT_0000/Homy/2F_ASLD/X_status";
+char Y_pTopic[128] = "kit/UT_0000/Homy/2F_ASLD/Y_status";
+char hour_meter_runtime_pTopic[128] = "kit/UT_0000/Homy/2F_ASLD/hour_meter_runtime";
+char all_status_pTopic[128] = "kit/UT_0000/Homy/2F_ASLD/all_status";
+// subs topics
+char *listenToAll_sTopic = "kit/UT_0000/#";
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
@@ -85,19 +71,15 @@ enum read_state
 read_state curr_slave = PLC;
 read_state last_slave = PLC;
 
-// String X_status_payload;
-// String Y_status_payload;
-// String X_prev;
-// String Y_prev;
 char X_status_payload[64];
 char Y_status_payload[64];
+
 char X_prev[64] = "";
 char Y_prev[64] = "";
 
 bool XY_hasChanged = true;
 uint32_t ChangeSlaveInterval = 500;
 
-// create webserver object for website:
 AsyncWebServer server(80); //
 
 WebSocketsServer m_websocketserver = WebSocketsServer(81);
@@ -121,34 +103,90 @@ String temp_json_string = "";
 
 Preferences preferences;
 
-int SET_StopPoints = 2;        // รับจาก name="floor_param"
-float SET_UpDuration = 18.5;   // รับจาก name="up_param"
-float SET_DownDuration = 18.0; // รับจาก name="down_param"
-int SET_Param4 = 0;            // รับจาก name="alice_param"
-int SET_Param5 = 0;            // รับจาก name="bob_param"
+int hour_meter_runtime = 0; // from web, set offset hourmerter runtime
 
+uint32_t lastTimeStartRunning = 0;
+uint32_t hour_meter_runtime_offset = 0;
+bool startCountingRuntime = false;
+bool hour_meter_hasChanged = false;
 
+void handleChangeTopic(byte *payload, unsigned int length)
+{
+
+  StaticJsonDocument<256> doc;
+  DeserializationError error = deserializeJson(doc, payload, length);
+
+  if (error)
+  {
+    Serial.print("JSON Parse failed: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  const char *target = doc["topic"];
+  const char *newPath = doc["change_to"];
+
+  if (!target || !newPath)
+  {
+    Serial.println("JSON format invalid: missing 'topic' or 'change_to'");
+    return;
+  }
+
+  preferences.begin("my-app", false);
+
+  if (strcmp(target, "X_pTopic") == 0)
+  {
+    strncpy(X_pTopic, newPath, sizeof(X_pTopic) - 1);
+    X_pTopic[sizeof(X_pTopic) - 1] = '\0';
+    preferences.putString("x_stat_top", newPath);
+    Serial.println("X_pTopic updated!");
+  }
+  else if (strcmp(target, "Y_pTopic") == 0)
+  {
+    strncpy(Y_pTopic, newPath, sizeof(Y_pTopic) - 1);
+    Y_pTopic[sizeof(Y_pTopic) - 1] = '\0';
+    preferences.putString("y_stat_top", newPath);
+    Serial.println("Y_pTopic updated!");
+  }
+  else if (strcmp(target, "hour_meter_runtime_pTopic") == 0)
+  {
+    strncpy(hour_meter_runtime_pTopic, newPath, sizeof(hour_meter_runtime_pTopic) - 1);
+    hour_meter_runtime_pTopic[sizeof(hour_meter_runtime_pTopic) - 1] = '\0';
+    preferences.putString("hr_run_top", newPath);
+    Serial.println("Hour Meter Topic updated!");
+  }
+  else
+  {
+    Serial.printf("Target topic '%s' not found.\n", target);
+  }
+
+  preferences.end();
+}
 
 void callback(char *topic, byte *payload, unsigned int length)
 {
   Serial.print("Message arrived [");
   Serial.print(topic);
-  Serial.print("] ");
+  Serial.print("] Content: ");
 
-  String message = "";
   for (int i = 0; i < length; i++)
   {
-    message += (char)payload[i];
+    Serial.print((char)payload[i]);
   }
-  Serial.println(message);
+  Serial.println();
 
-  if (String(topic) == "kit/print")
+  if (strcmp(topic, "kit/print") == 0)
   {
     Serial.print("Print command received: ");
-    Serial.println(message);
+    for (int i = 0; i < length; i++)
+      Serial.print((char)payload[i]);
+    Serial.println();
   }
 
-
+  if (strcmp(topic, "kit/UT_0000/changeTopic") == 0)
+  {
+    handleChangeTopic(payload, length);
+  }
 }
 
 void setupMQTT()
@@ -202,6 +240,44 @@ void isChange(const char *from, uint16_t *data, bool *flag)
   }
 }
 
+void elevatorRuntimeCounter(uint16_t y_stat)
+{
+  bool y1 = (y_stat >> 1) & 0x01;
+  bool y2 = (y_stat >> 2) & 0x01;
+  bool isRunning = (y1 || y2);
+
+  if (isRunning && !startCountingRuntime)
+  {
+    lastTimeStartRunning = millis();
+    startCountingRuntime = true;
+    Serial.println("Elevator started moving...");
+  }
+
+  if (!isRunning && startCountingRuntime)
+  {
+    uint32_t runDurationMS = millis() - lastTimeStartRunning;
+
+    hour_meter_runtime += runDurationMS;
+
+    preferences.begin("my-config", false);
+    preferences.putInt("hourmeter", hour_meter_runtime);
+    preferences.end();
+
+    hour_meter_hasChanged = true;
+    startCountingRuntime = false;
+
+    Serial.printf("Elevator stopped. Ran for: %u ms\n", runDurationMS);
+  }
+}
+
+void updateTopicFromPrefs(const char *key, char *buffer, size_t bufferSize)
+{
+  String temp = preferences.getString(key, buffer);
+
+  strncpy(buffer, temp.c_str(), bufferSize - 1);
+  buffer[bufferSize - 1] = '\0';
+}
+
 void publishMqtt(const char *topic, const char *msg)
 {
   if (xSemaphoreTake(mqttMutex, portMAX_DELAY) == pdTRUE)
@@ -241,8 +317,7 @@ void vReconnectTask(void *pvParams)
           if (mqttClient.connect(clientId.c_str()))
           {
             Serial.println("connected");
-            mqttClient.subscribe(KIT_listenToAll);
-            // Re-subscribe here if needed
+            mqttClient.subscribe(listenToAll_sTopic);
           }
           else
           {
@@ -251,7 +326,6 @@ void vReconnectTask(void *pvParams)
           }
         }
 
-        // IMPORTANT: loop() must be called frequently to maintain connection
         if (mqttClient.connected())
         {
           mqttClient.loop();
@@ -260,7 +334,7 @@ void vReconnectTask(void *pvParams)
         xSemaphoreGive(mqttMutex);
       }
     }
-    vTaskDelay(pdMS_TO_TICKS(100)); // Check every 100ms
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 
@@ -287,6 +361,7 @@ void vPollingTask(void *pvParams)
         hreg[PLC_slaveID][5] = node.getResponseBuffer(5);
         hreg[PLC_slaveID][6] = node.getResponseBuffer(6);
         hreg[PLC_slaveID][7] = node.getResponseBuffer(7);
+        elevatorRuntimeCounter(hreg[PLC_slaveID][4]);
 
         if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
         {
@@ -311,21 +386,70 @@ void vPollingTask(void *pvParams)
   }
 }
 
+// void vPublishTask(void *pvParams)
+// {
+//   char runtimeBuffer[16];
+//   for (;;)
+//   {
+//     if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
+//     {
+
+//       if (XY_hasChanged)
+//       {
+//         publishMqtt(X_pTopic, X_status_payload);
+//         publishMqtt(Y_pTopic, Y_status_payload);
+
+//         if (hour_meter_hasChanged)
+//         {
+//           snprintf(runtimeBuffer, sizeof(runtimeBuffer), "%u", hour_meter_runtime);
+//           publishMqtt(hour_meter_runtime_pTopic, runtimeBuffer);
+//           hour_meter_hasChanged = false;
+//         }
+
+//         XY_hasChanged = false;
+//       }
+
+//       xSemaphoreGive(hasChangedMutex);
+//     }
+//     vTaskDelay(pdMS_TO_TICKS(100));
+//   }
+// }
+
 void vPublishTask(void *pvParams)
 {
-  for (;;)
-  {
-    if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
+    for (;;)
     {
-      if (XY_hasChanged == true)
-      {
-        publishMqtt(x_mqtt_topic, X_status_payload);
-        publishMqtt(y_mqtt_topic, Y_status_payload);
-        XY_hasChanged = false;
-      }
-      xSemaphoreGive(hasChangedMutex);
+        bool shouldPublish = false;
+        
+        if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
+        {
+            if (XY_hasChanged || hour_meter_hasChanged) 
+            {
+                shouldPublish = true;
+                XY_hasChanged = false;
+                hour_meter_hasChanged = false;
+            }
+            xSemaphoreGive(hasChangedMutex);
+        }
+
+        if (shouldPublish)
+        {
+            StaticJsonDocument<256> doc;
+            doc["x"] = X_status_payload;
+            doc["y"] = Y_status_payload;
+            doc["hr"] = hour_meter_runtime;
+
+            char combinedPayload[256];
+            serializeJson(doc, combinedPayload);
+
+            publishMqtt(all_status_pTopic, combinedPayload);
+            
+            Serial.print("Published Combined: ");
+            Serial.println(combinedPayload);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
-  }
 }
 
 boolean connectAttempt(String ssid, String password)
@@ -779,8 +903,8 @@ void runWifiPortal()
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, PUT");
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "*");
 
-  // m_wifitools_server->serveStatic("/", SPIFFS, "/").setDefaultFile("wifi_index.html");
-  m_wifitools_server->serveStatic("/", SPIFFS, "/").setDefaultFile("setup.html");
+  m_wifitools_server->serveStatic("/", SPIFFS, "/").setDefaultFile("wifi_index.html");
+  // m_wifitools_server->serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
 
   // m_wifitools_server->on("/saveSecret/", HTTP_ANY, [&, this](AsyncWebServerRequest *request) {
   //   handleGetSavSecreteJson(request);
@@ -817,8 +941,8 @@ void runWifiPortal()
     if (millis() - apModeStartTime > AP_TIMEOUT)
     {
       Serial.println("AP Mode Timeout (3mins exceeded). Restarting system...");
-      delay(500);    
-      ESP.restart(); 
+      delay(500);
+      ESP.restart();
     }
   }
 }
@@ -909,15 +1033,8 @@ void onWebSocketEvent(uint8_t num,
   }
   break;
 
-  // Echo text message back to client
   case WStype_TEXT:
-    // Serial.println(payload[0,length-1]); // this doesn't work....
     Serial.printf("[%u] Received text: %s\n", num, payload);
-    // m_websocketserver.sendTXT(num, payload);
-    // if (true == false) // later change to if message has certain format:
-    // {
-    //   m_websocket_send_rate = (float)atof((const char *)&payload[0]); // adjust data send rate used in loop
-    // }
     handle_websocket_text(payload);
 
     break;
@@ -1057,38 +1174,19 @@ void configureserver()
                   Serial.print(" = ");
                   Serial.println(paramValue);
 
-                  if (paramName == "floor_param")
+                  if (paramName == "hmt_runtime_param")
                   {
-                    SET_StopPoints = paramValue.toInt();
-                    preferences.putInt("stop_pt", SET_StopPoints); // บันทึก int
-                  }
-                  else if (paramName == "up_param")
-                  {
-                    SET_UpDuration = paramValue.toFloat();
-                    preferences.putFloat("up_dur", SET_UpDuration); // บันทึก float
-                  }
-                  else if (paramName == "down_param")
-                  {
-                    SET_DownDuration = paramValue.toFloat();
-                    preferences.putFloat("down_dur", SET_DownDuration);
-                  }
-                  else if (paramName == "alice_param")
-                  {
-                    SET_Param4 = paramValue.toInt();
-                    preferences.putInt("param4", SET_Param4);
-                  }
-                  else if (paramName == "bob_param")
-                  {
-                    SET_Param5 = paramValue.toInt();
-                    preferences.putInt("param5", SET_Param5);
+                    uint32_t hour_meter_runtime_offset_MS;
+                    hour_meter_runtime_offset = paramValue.toInt();
+                    hour_meter_runtime_offset_MS = hour_meter_runtime_offset * 60 * 1000; // Convert minutes to milliseconds
+                    preferences.putInt("hourmeter", hour_meter_runtime + hour_meter_runtime_offset);
                   }
                 }
               }
 
               preferences.end();
               Serial.println("--- Updated Variables ---");
-              Serial.printf("StopPoints: %d\n", SET_StopPoints);
-              Serial.printf("UpDur: %.2f, DownDur: %.2f\n", SET_UpDuration, SET_DownDuration);
+              Serial.printf("Hour Meter Offset: %d\n", hour_meter_runtime_offset);
               //**********************************************
 
               if (request->hasParam(PARAM_MESSAGE, true))
@@ -1126,9 +1224,8 @@ void setup()
   while (!Serial)
     ;
 
-  Serial.println("Welcome to Ximplex_KIT");
+  Serial.println("Welcome to Ximqtt");
 
-  delay(50);
   delay(50);
 
   // ############################### SPIFFS STARTUP #######################################
@@ -1151,12 +1248,8 @@ void setup()
   }
   if (!m_autoconnected_attempt_succeeded)
   {
-    // start AP server
-    // Serial.println("connect failed, starting AP server");
     setUpAPService();
     runWifiPortal();
-
-    // MDNS.begin("nanostat"); // see https://randomnerdtutorials.com/esp32-access-point-ap-web-server/
   }
 
   MDNS.begin("ximplex_kit");
@@ -1176,41 +1269,18 @@ void setup()
   Serial.println(WiFi.localIP());
   setupMQTT();
 
-
-  // for (int i = 0; i < subTopicNum; i++) {
-  //   sub_buff[i].topic = "";
-  //   sub_buff[i].payload = "";
-  // }
-
   preferences.begin("my-config", false); // read only
-  SET_StopPoints = preferences.getInt("stop_pt", 2);
-  SET_UpDuration = preferences.getFloat("up_dur", 18.5);
-  SET_DownDuration = preferences.getFloat("down_dur", 18.0);
-  SET_Param4 = preferences.getInt("param4", 0);
-  SET_Param5 = preferences.getInt("param5", 0);
+  hour_meter_runtime = preferences.getInt("hourmeter", 0);
+  updateTopicFromPrefs("x_stat_top", X_pTopic, sizeof(X_pTopic));
+  updateTopicFromPrefs("y_stat_top", Y_pTopic, sizeof(Y_pTopic));
+  updateTopicFromPrefs("hr_run_top", hour_meter_runtime_pTopic, sizeof(hour_meter_runtime_pTopic));
   preferences.end();
 
   Serial.println("--- Loaded Settings ---");
-  Serial.printf("StopPoints: %d\n", SET_StopPoints);
-  Serial.printf("Up: %.2f, Down: %.2f\n", SET_UpDuration, SET_DownDuration);
-
-  snprintf(
-      x_mqtt_topic,
-      sizeof(x_mqtt_topic),
-      "%s%s%s%s",
-      KIT_topic,
-      UT_case,
-      system_status,
-      X_status);
-
-  snprintf(
-      y_mqtt_topic,
-      sizeof(y_mqtt_topic),
-      "%s%s%s%s",
-      KIT_topic,
-      UT_case,
-      system_status,
-      Y_status);
+  Serial.printf("Hour Meter Offset: %d\n", hour_meter_runtime_offset);
+  Serial.printf("X Status Topic: %s\n", X_pTopic);
+  Serial.printf("Y Status Topic: %s\n", Y_pTopic);
+  Serial.printf("Hour Meter Runtime Topic: %s\n", hour_meter_runtime_pTopic);
 
   pinMode(WIFI_READY, OUTPUT);
   mqttMutex = xSemaphoreCreateMutex();
@@ -1228,5 +1298,4 @@ void loop()
 {
 
   m_websocketserver.loop();
-
 }
