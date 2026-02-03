@@ -15,7 +15,6 @@
 
 #include <WiFiClientSecure.h>
 // #include <HTTPUpdate.h>
-
 #include <Preferences.h>
 
 // const char *firmwareURL = "https://raw.githubusercontent.com/TheerawutP/test_OTA/main/MCU.ino.bin";
@@ -385,35 +384,6 @@ void vPollingTask(void *pvParams)
     vTaskDelay(pdMS_TO_TICKS(ChangeSlaveInterval));
   }
 }
-
-// void vPublishTask(void *pvParams)
-// {
-//   char runtimeBuffer[16];
-//   for (;;)
-//   {
-//     if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
-//     {
-
-//       if (XY_hasChanged)
-//       {
-//         publishMqtt(X_pTopic, X_status_payload);
-//         publishMqtt(Y_pTopic, Y_status_payload);
-
-//         if (hour_meter_hasChanged)
-//         {
-//           snprintf(runtimeBuffer, sizeof(runtimeBuffer), "%u", hour_meter_runtime);
-//           publishMqtt(hour_meter_runtime_pTopic, runtimeBuffer);
-//           hour_meter_hasChanged = false;
-//         }
-
-//         XY_hasChanged = false;
-//       }
-
-//       xSemaphoreGive(hasChangedMutex);
-//     }
-//     vTaskDelay(pdMS_TO_TICKS(100));
-//   }
-// }
 
 void vPublishTask(void *pvParams)
 {
