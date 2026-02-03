@@ -51,6 +51,8 @@ const int mqtt_port = 1883; // unencrypt
 char X_pTopic[128] = "kit/UT_0000/Homy/2F_ASLD/X_status";
 char Y_pTopic[128] = "kit/UT_0000/Homy/2F_ASLD/Y_status";
 char hour_meter_runtime_pTopic[128] = "kit/UT_0000/Homy/2F_ASLD/hour_meter_runtime";
+char open_time_pTopic[128] = "kit/UT_0000/Homy/2F_ASLD/door_open_time";
+char close_time_pTopic[128] = "kit/UT_0000/Homy/2F_ASLD/door_close_time";
 char all_status_pTopic[128] = "kit/UT_0000/Homy/2F_ASLD/all_status";
 // subs topics
 char *listenToAll_sTopic = "kit/UT_0000/#";
@@ -67,8 +69,18 @@ enum read_state
   SERVO
 };
 
+enum door_state
+{
+  DOOR_NULL,
+  DOOR_CLOSED,
+  DOOR_OPENING,
+  DOOR_OPEN,
+  DOOR_CLOSING
+};
+
 read_state curr_slave = PLC;
 read_state last_slave = PLC;
+door_state currentState = DOOR_NULL;
 
 char X_status_payload[64];
 char Y_status_payload[64];
@@ -108,6 +120,14 @@ uint32_t lastTimeStartRunning = 0;
 uint32_t hour_meter_runtime_offset = 0;
 bool startCountingRuntime = false;
 bool hour_meter_hasChanged = false;
+
+uint32_t openingStartTime = 0;
+uint32_t closingStartTime = 0;
+uint32_t openDuration = 0;
+uint32_t closeDuration = 0;
+int openTime = 0;
+int closeTime = 0;
+bool door_hasChanged = false;
 
 void handleChangeTopic(byte *payload, unsigned int length)
 {
@@ -185,6 +205,26 @@ void callback(char *topic, byte *payload, unsigned int length)
   if (strcmp(topic, "kit/UT_0000/changeTopic") == 0)
   {
     handleChangeTopic(payload, length);
+  }
+
+  if (strcmp(topic, "kit/UT_0000/resetHourMeter") == 0)
+  {
+    hour_meter_runtime = 0;
+    preferences.begin("my-config", false);
+    preferences.putInt("hourmeter", hour_meter_runtime);
+    preferences.end();
+    Serial.println("Hour meter runtime reset to 0.");
+  }
+  
+  if(strcmp(topic, "kit/UT_0000/resetOpenCloseCount") == 0)
+  {
+    openTime = 0;
+    closeTime = 0;
+    preferences.begin("my-config", false);
+    preferences.putInt("openTime", openTime);
+    preferences.putInt("closeTime", closeTime);
+    preferences.end();
+    Serial.println("Door open/close counters reset to 0.");
   }
 }
 
@@ -267,6 +307,55 @@ void elevatorRuntimeCounter(uint16_t y_stat)
 
     Serial.printf("Elevator stopped. Ran for: %u ms\n", runDurationMS);
   }
+}
+
+void doorRuntimeCounter(uint16_t x_stat) {
+    bool isClosedLim = (x_stat >> 7) & 0x01;  // X7
+    bool isOpenLim = (x_stat >> 10) & 0x01;   // X10
+    
+    if (currentState == DOOR_NULL) {
+        if (isClosedLim) currentState = DOOR_CLOSED;
+        else if (isOpenLim) currentState = DOOR_OPEN;
+        return;
+    }
+
+    switch (currentState) {
+        case DOOR_CLOSED:
+            if (!isClosedLim) { 
+                currentState = DOOR_OPENING;
+                openingStartTime = millis();
+            }
+            break;
+
+        case DOOR_OPENING:
+            if (isOpenLim) {
+                openDuration = millis() - openingStartTime;
+                openTime++;
+                currentState = DOOR_OPEN;
+                door_hasChanged = true; 
+                Serial.printf("Door Opened. Duration: %u ms\n", openDuration);
+            }
+            break;
+
+        case DOOR_OPEN:
+            if (!isOpenLim) { 
+                currentState = DOOR_CLOSING;
+                closingStartTime = millis();
+            }
+            break;
+
+        case DOOR_CLOSING:
+            if (isClosedLim) { 
+                closeDuration = millis() - closingStartTime;
+                closeTime++;
+                currentState = DOOR_CLOSED;
+                door_hasChanged = true;
+                Serial.printf("Door Closed. Duration: %u ms\n", closeDuration);
+            }
+            break;
+            
+        default: break;
+    }
 }
 
 void updateTopicFromPrefs(const char *key, char *buffer, size_t bufferSize)
@@ -360,6 +449,8 @@ void vPollingTask(void *pvParams)
         hreg[PLC_slaveID][5] = node.getResponseBuffer(5);
         hreg[PLC_slaveID][6] = node.getResponseBuffer(6);
         hreg[PLC_slaveID][7] = node.getResponseBuffer(7);
+
+        doorRuntimeCounter(hreg[PLC_slaveID][0]);
         elevatorRuntimeCounter(hreg[PLC_slaveID][4]);
 
         if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
@@ -387,39 +478,53 @@ void vPollingTask(void *pvParams)
 
 void vPublishTask(void *pvParams)
 {
-    for (;;)
+  for (;;)
+  {
+    bool shouldPublish = false;
+
+    if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
     {
-        bool shouldPublish = false;
-        
-        if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
+      if (XY_hasChanged || hour_meter_hasChanged || door_hasChanged)
+      {
+        shouldPublish = true;
+        XY_hasChanged = false;
+        hour_meter_hasChanged = false;
+
+        if (door_hasChanged)
         {
-            if (XY_hasChanged || hour_meter_hasChanged) 
-            {
-                shouldPublish = true;
-                XY_hasChanged = false;
-                hour_meter_hasChanged = false;
-            }
-            xSemaphoreGive(hasChangedMutex);
+          preferences.begin("my-config", false);
+          preferences.putInt("openTime", openTime);
+          preferences.putInt("closeTime", closeTime);
+          preferences.end();
+
+          door_hasChanged = false;
         }
-
-        if (shouldPublish)
-        {
-            StaticJsonDocument<256> doc;
-            doc["x"] = X_status_payload;
-            doc["y"] = Y_status_payload;
-            doc["hr"] = hour_meter_runtime;
-
-            char combinedPayload[256];
-            serializeJson(doc, combinedPayload);
-
-            publishMqtt(all_status_pTopic, combinedPayload);
-            
-            Serial.print("Published Combined: ");
-            Serial.println(combinedPayload);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(100));
+      }
+      xSemaphoreGive(hasChangedMutex);
     }
+
+    if (shouldPublish)
+    {
+      StaticJsonDocument<256> doc;
+      doc["x"] = X_status_payload;
+      doc["y"] = Y_status_payload;
+      doc["hr"] = hour_meter_runtime;
+      doc["cl_dur"] = closeDuration;
+      doc["op_dur"] = openDuration;
+      doc["op_time"] = openTime;
+      doc["cl_time"] = closeTime;
+
+      char combinedPayload[256];
+      serializeJson(doc, combinedPayload);
+
+      publishMqtt(all_status_pTopic, combinedPayload);
+
+      Serial.print("Published Combined: ");
+      Serial.println(combinedPayload);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
 }
 
 boolean connectAttempt(String ssid, String password)
@@ -1241,9 +1346,13 @@ void setup()
 
   preferences.begin("my-config", false); // read only
   hour_meter_runtime = preferences.getInt("hourmeter", 0);
+  openTime = preferences.getInt("openTime", 0);
+  closeTime = preferences.getInt("closeTime", 0);
   updateTopicFromPrefs("x_stat_top", X_pTopic, sizeof(X_pTopic));
   updateTopicFromPrefs("y_stat_top", Y_pTopic, sizeof(Y_pTopic));
   updateTopicFromPrefs("hr_run_top", hour_meter_runtime_pTopic, sizeof(hour_meter_runtime_pTopic));
+  updateTopicFromPrefs("openTime", open_time_pTopic, sizeof(open_time_pTopic));
+  updateTopicFromPrefs("closeTime", close_time_pTopic, sizeof(close_time_pTopic));
   preferences.end();
 
   Serial.println("--- Loaded Settings ---");
@@ -1251,6 +1360,8 @@ void setup()
   Serial.printf("X Status Topic: %s\n", X_pTopic);
   Serial.printf("Y Status Topic: %s\n", Y_pTopic);
   Serial.printf("Hour Meter Runtime Topic: %s\n", hour_meter_runtime_pTopic);
+  Serial.printf("Open Time Topic: %s\n", open_time_pTopic);
+  Serial.printf("Close Time Topic: %s\n", close_time_pTopic);
 
   pinMode(WIFI_READY, OUTPUT);
   mqttMutex = xSemaphoreCreateMutex();
