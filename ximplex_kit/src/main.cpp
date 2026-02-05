@@ -48,14 +48,14 @@ const int mqtt_port = 1883; // unencrypt
 // topics
 // publish topics
 
-char X_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/X_status";
-char Y_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/Y_status";
-char hour_meter_runtime_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/hour_meter_runtime";
-char open_time_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/door_open_time";
-char close_time_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/door_close_time";
-char all_status_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/all_status";
+char X_pTopic[128] = "kit/UT_00000/Homy/2F2S_ASW/X_status";
+char Y_pTopic[128] = "kit/UT_00000/Homy/2F2S_ASW/Y_status";
+char hour_meter_runtime_pTopic[128] = "kit/UT_00000/Homy/2F2S_ASW/hour_meter_runtime";
+char open_time_pTopic[128] = "kit/UT_00000/Homy/2F2S_ASW/door_open_time";
+char close_time_pTopic[128] = "kit/UT_00000/Homy/2F2S_ASW/door_close_time";
+char all_status_pTopic[128] = "kit/UT_00000/Homy/2F2S_ASW/all_status";
 // subs topics
-char *listenToAll_sTopic = "kit/UT_25075/#";
+char *listenToAll_sTopic = "kit/UT_00000/#";
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
@@ -114,10 +114,10 @@ String temp_json_string = "";
 
 Preferences preferences;
 
-uint64_t hour_meter_runtime = 0; // from web, set offset hourmerter runtime
+uint32_t hour_meter_runtime = 0; // from web, set offset hourmerter runtime
 
 uint32_t lastTimeStartRunning = 0;
-uint64_t hour_meter_runtime_offset = 0;
+uint32_t hour_meter_runtime_offset = 0;
 bool startCountingRuntime = false;
 bool hour_meter_hasChanged = false;
 
@@ -202,12 +202,12 @@ void callback(char *topic, byte *payload, unsigned int length)
     Serial.println();
   }
 
-  if (strcmp(topic, "kit/UT_25075/changeTopic") == 0)
+  if (strcmp(topic, "kit/UT_00000/changeTopic") == 0)
   {
     handleChangeTopic(payload, length);
   }
 
-  if (strcmp(topic, "kit/UT_25075/resetHourMeter") == 0)
+  if (strcmp(topic, "kit/UT_00000/resetHourMeter") == 0)
   {
     hour_meter_runtime = 0;
     preferences.begin("my-config", false);
@@ -216,13 +216,13 @@ void callback(char *topic, byte *payload, unsigned int length)
     Serial.println("Hour meter runtime reset to 0.");
   }
 
-  if (strcmp(topic, "kit/UT_25075/resetOpenCloseCount") == 0)
+  if (strcmp(topic, "kit/UT_00000/resetOpenCloseCount") == 0)
   {
     openTime = 0;
     closeTime = 0;
     preferences.begin("my-config", false);
-    preferences.putInt("openTime", openTime);
-    preferences.putInt("closeTime", closeTime);
+    preferences.putInt("opTime", openTime);
+    preferences.putInt("clTime", closeTime);
     preferences.end();
     Serial.println("Door open/close counters reset to 0.");
   }
@@ -312,7 +312,7 @@ void elevatorRuntimeCounter(uint16_t y_stat)
 void doorRuntimeCounter(uint16_t x_stat)
 {
   bool isClosedLim = (x_stat >> 7) & 0x01; // X7
-  bool isOpenLim = (x_stat >> 10) & 0x01;  // X10
+  bool isOpenLim = (x_stat >> 8) & 0x01;  // X10
 
   if (currentState == DOOR_NULL)
   {
@@ -363,8 +363,6 @@ void doorRuntimeCounter(uint16_t x_stat)
     }
     break;
 
-  default:
-    break;
   }
 }
 
@@ -503,8 +501,8 @@ void vPublishTask(void *pvParams)
         if (door_hasChanged)
         {
           preferences.begin("my-config", false);
-          preferences.putInt("openTime", openTime);
-          preferences.putInt("closeTime", closeTime);
+          preferences.putInt("opTime", openTime);
+          preferences.putInt("clTime", closeTime);
           preferences.end();
 
           door_hasChanged = false;
@@ -531,6 +529,7 @@ void vPublishTask(void *pvParams)
 
       Serial.print("Published Combined: ");
       Serial.println(combinedPayload);
+      Serial.println(currentState);
     }
 
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -1261,7 +1260,7 @@ void configureserver()
 
                   if (paramName == "hmt_runtime_param")
                   {
-                    uint64_t hour_meter_runtime_offset_MS;
+                    uint32_t hour_meter_runtime_offset_MS;
                     hour_meter_runtime_offset = paramValue.toInt();
                     hour_meter_runtime_offset_MS = hour_meter_runtime_offset * 60 * 1000; // Convert minutes to milliseconds
 
@@ -1272,7 +1271,7 @@ void configureserver()
                       xSemaphoreGive(hasChangedMutex);
                     }
 
-                    preferences.putLong64("hourmeter", hour_meter_runtime);
+                    preferences.putUInt("hourmeter", hour_meter_runtime);
                   }
                 }
               }
@@ -1363,14 +1362,14 @@ void setup()
   setupMQTT();
 
   preferences.begin("my-config", false); // read only
-  hour_meter_runtime = preferences.getLong64("hourmeter", 0);
-  openTime = preferences.getInt("openTime", 0);
-  closeTime = preferences.getInt("closeTime", 0);
+  hour_meter_runtime = preferences.getUInt("hourmeter", 0);
+  openTime = preferences.getInt("opTime", 0);
+  closeTime = preferences.getInt("clTime", 0);
   updateTopicFromPrefs("x_stat_top", X_pTopic, sizeof(X_pTopic));
   updateTopicFromPrefs("y_stat_top", Y_pTopic, sizeof(Y_pTopic));
   updateTopicFromPrefs("hr_run_top", hour_meter_runtime_pTopic, sizeof(hour_meter_runtime_pTopic));
-  updateTopicFromPrefs("openTime", open_time_pTopic, sizeof(open_time_pTopic));
-  updateTopicFromPrefs("closeTime", close_time_pTopic, sizeof(close_time_pTopic));
+  updateTopicFromPrefs("openTime_top", open_time_pTopic, sizeof(open_time_pTopic));
+  updateTopicFromPrefs("closeTime_top", close_time_pTopic, sizeof(close_time_pTopic));
   preferences.end();
 
   Serial.println("--- Loaded Settings ---");
@@ -1397,4 +1396,5 @@ void loop()
 {
 
   m_websocketserver.loop();
+
 }
