@@ -1,0 +1,34 @@
+let data = (typeof msg.payload === 'string') ? JSON.parse(msg.payload) : msg.payload;
+
+function extractBits(inputStr, prefix) {
+    if (!inputStr) return []; 
+    let registers = inputStr.split(',').map(Number);
+    let allBits = [];
+    let startAddresses = [0, 20, 40, 60]; 
+
+    registers.forEach((value, regIdx) => {
+        let baseAddr = startAddresses[regIdx];
+        for (let i = 0; i < 16; i++) {
+            let offset = Math.floor(i / 8) * 10 + (i % 8);
+            let addr = baseAddr + offset;
+            let status = (value >> i) & 1;
+            allBits.push({
+                lab: prefix + addr.toString().padStart(2, '0'),
+                val: status
+            });
+        }
+    });
+    return allBits;
+}
+
+msg.payload = {
+    inputs: extractBits(data.x, "X"),
+    outputs: extractBits(data.y, "Y"),
+    runtime: data.hr,
+    openDuration: data.op_dur,
+    closeDuration: data.cl_dur,
+    openTime: data.op_time,
+    closeTime: data.cl_time
+};
+
+return msg;

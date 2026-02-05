@@ -1,0 +1,27 @@
+let data = (typeof msg.payload === 'string') ? JSON.parse(msg.payload) : msg.payload;
+
+function toBin16(str) {
+    return str.split(',').map(val => {
+        let bin = (parseInt(val, 10) >>> 0).toString(2).split("").reverse().join("");
+        return "'" + bin.padEnd(16, '0');
+    });
+}
+
+let timestamp = "'" + new Date().toLocaleString('th-TH', { 
+    timeZone: 'Asia/Bangkok', 
+    hour12: false 
+});
+
+let formattedX = toBin16(data.x);
+let formattedY = toBin16(data.y);
+
+let runtime = [data.hr.toString()];
+
+let openDur = [data.op_dur.toString()];
+let closeDur = [data.cl_dur.toString()];
+let openTime = [data.op_time.toString()];
+let closeTime =  [data.cl_time.toString()];
+
+msg.payload = [timestamp, ...formattedX, ...formattedY, ...runtime, ...openDur, ...closeDur, ...openTime, ...closeTime ];
+
+return msg;

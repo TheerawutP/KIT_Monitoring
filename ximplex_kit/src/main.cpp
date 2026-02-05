@@ -48,14 +48,14 @@ const int mqtt_port = 1883; // unencrypt
 // topics
 // publish topics
 
-char X_pTopic[128] = "kit/UT_00000/Homy/2F2S_ASW/X_status";
-char Y_pTopic[128] = "kit/UT_00000/Homy/2F2S_ASW/Y_status";
-char hour_meter_runtime_pTopic[128] = "kit/UT_00000/Homy/2F2S_ASW/hour_meter_runtime";
-char open_time_pTopic[128] = "kit/UT_00000/Homy/2F2S_ASW/door_open_time";
-char close_time_pTopic[128] = "kit/UT_00000/Homy/2F2S_ASW/door_close_time";
-char all_status_pTopic[128] = "kit/UT_00000/Homy/2F2S_ASW/all_status";
+char X_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/X_status";
+char Y_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/Y_status";
+char hour_meter_runtime_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/hour_meter_runtime";
+char open_time_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/door_open_time";
+char close_time_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/door_close_time";
+char all_status_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/all_status";
 // subs topics
-char *listenToAll_sTopic = "kit/UT_00000/#";
+char *listenToAll_sTopic = "kit/UT_25075/#";
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
@@ -202,12 +202,12 @@ void callback(char *topic, byte *payload, unsigned int length)
     Serial.println();
   }
 
-  if (strcmp(topic, "kit/UT_00000/changeTopic") == 0)
+  if (strcmp(topic, "kit/UT_25075/changeTopic") == 0)
   {
     handleChangeTopic(payload, length);
   }
 
-  if (strcmp(topic, "kit/UT_00000/resetHourMeter") == 0)
+  if (strcmp(topic, "kit/UT_25075/resetHourMeter") == 0)
   {
     hour_meter_runtime = 0;
     preferences.begin("my-config", false);
@@ -216,7 +216,7 @@ void callback(char *topic, byte *payload, unsigned int length)
     Serial.println("Hour meter runtime reset to 0.");
   }
 
-  if (strcmp(topic, "kit/UT_00000/resetOpenCloseCount") == 0)
+  if (strcmp(topic, "kit/UT_25075/resetOpenCloseCount") == 0)
   {
     openTime = 0;
     closeTime = 0;
