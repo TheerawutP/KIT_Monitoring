@@ -48,14 +48,14 @@ const int mqtt_port = 1883; // unencrypt
 // topics
 // publish topics
 
-char X_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/X_status";
-char Y_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/Y_status";
-char hour_meter_runtime_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/hour_meter_runtime";
-char open_time_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/door_open_time";
-char close_time_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/door_close_time";
-char all_status_pTopic[128] = "kit/UT_25075/Homy/2F2S_ASW/all_status";
+char X_pTopic[128] = "kit/UT_25061/Homy/2F2S_MSW/X_status";
+char Y_pTopic[128] = "kit/UT_25061/Homy/2F2S_MSW/Y_status";
+char hour_meter_runtime_pTopic[128] = "kit/UT_25061/Homy/2F2S_MSW/hour_meter_runtime";
+char open_time_pTopic[128] = "kit/UT_25061/Homy/2F2S_MSW/door_open_time";
+char close_time_pTopic[128] = "kit/UT_25061/Homy/2F2S_MSW/door_close_time";
+char all_status_pTopic[128] = "kit/UT_25061/Homy/2F2S_MSW/all_status";
 // subs topics
-char *listenToAll_sTopic = "kit/UT_25075/#";
+char *listenToAll_sTopic = "kit/UT_25061/#";
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
@@ -202,12 +202,12 @@ void callback(char *topic, byte *payload, unsigned int length)
     Serial.println();
   }
 
-  if (strcmp(topic, "kit/UT_25075/changeTopic") == 0)
+  if (strcmp(topic, "kit/UT_25061/changeTopic") == 0)
   {
     handleChangeTopic(payload, length);
   }
 
-  if (strcmp(topic, "kit/UT_25075/resetHourMeter") == 0)
+  if (strcmp(topic, "kit/UT_25061/resetHourMeter") == 0)
   {
     hour_meter_runtime = 0;
     preferences.begin("my-config", false);
@@ -216,7 +216,7 @@ void callback(char *topic, byte *payload, unsigned int length)
     Serial.println("Hour meter runtime reset to 0.");
   }
 
-  if (strcmp(topic, "kit/UT_25075/resetOpenCloseCount") == 0)
+  if (strcmp(topic, "kit/UT_25061/resetOpenCloseCount") == 0)
   {
     openTime = 0;
     closeTime = 0;
@@ -309,60 +309,98 @@ void elevatorRuntimeCounter(uint16_t y_stat)
   }
 }
 
-void doorRuntimeCounter(uint16_t x_stat)
+// void doorRuntimeCounter_AUTO(uint16_t x_stat)
+// {
+//   bool isClosedLim = (x_stat >> 7) & 0x01; // X7
+//   bool isOpenLim = (x_stat >> 8) & 0x01;  // X10
+
+//   if (currentState == DOOR_NULL)
+//   {
+//     if (isClosedLim)
+//       currentState = DOOR_CLOSED;
+//     else if (isOpenLim)
+//       currentState = DOOR_OPEN;
+//     return;
+//   }
+
+//   switch (currentState)
+//   {
+//   case DOOR_CLOSED:
+//     if (!isClosedLim)
+//     {
+//       currentState = DOOR_OPENING;
+//       openingStartTime = millis();
+//     }
+//     break;
+
+//   case DOOR_OPENING:
+//     if (isOpenLim)
+//     {
+//       openDuration = millis() - openingStartTime;
+//       openTime++;
+//       currentState = DOOR_OPEN;
+//       door_hasChanged = true;
+//       Serial.printf("Door Opened. Duration: %u ms\n", openDuration);
+//     }
+//     break;
+
+//   case DOOR_OPEN:
+//     if (!isOpenLim)
+//     {
+//       currentState = DOOR_CLOSING;
+//       closingStartTime = millis();
+//     }
+//     break;
+
+//   case DOOR_CLOSING:
+//     if (isClosedLim)
+//     {
+//       closeDuration = millis() - closingStartTime;
+//       closeTime++;
+//       currentState = DOOR_CLOSED;
+//       door_hasChanged = true;
+//       Serial.printf("Door Closed. Duration: %u ms\n", closeDuration);
+//     }
+//     break;
+
+//   }
+// }
+
+
+void doorRuntimeCounter_MANUAL(uint16_t x_stat)
 {
-  bool isClosedLim = (x_stat >> 7) & 0x01; // X7
-  bool isOpenLim = (x_stat >> 8) & 0x01;  // X10
+  bool isClosedLim = (x_stat >> 7) & 0x01; 
 
   if (currentState == DOOR_NULL)
   {
-    if (isClosedLim)
-      currentState = DOOR_CLOSED;
-    else if (isOpenLim)
-      currentState = DOOR_OPEN;
+    if (isClosedLim) currentState = DOOR_CLOSED;
+    else currentState = DOOR_OPEN; 
     return;
   }
 
   switch (currentState)
   {
-  case DOOR_CLOSED:
-    if (!isClosedLim)
-    {
-      currentState = DOOR_OPENING;
-      openingStartTime = millis();
-    }
-    break;
+    case DOOR_CLOSED:
+      if (!isClosedLim)
+      {
+        currentState = DOOR_OPEN; 
+        openingStartTime = millis(); 
+      }
+      break;
 
-  case DOOR_OPENING:
-    if (isOpenLim)
-    {
-      openDuration = millis() - openingStartTime;
-      openTime++;
-      currentState = DOOR_OPEN;
-      door_hasChanged = true;
-      Serial.printf("Door Opened. Duration: %u ms\n", openDuration);
-    }
-    break;
+    case DOOR_OPEN:
+      if (isClosedLim)
+      {
+        uint32_t cycleDuration = millis() - openingStartTime;
 
-  case DOOR_OPEN:
-    if (!isOpenLim)
-    {
-      currentState = DOOR_CLOSING;
-      closingStartTime = millis();
-    }
-    break;
+        openTime++;
+        closeTime++;
+        currentState = DOOR_CLOSED;
+        door_hasChanged = true;
 
-  case DOOR_CLOSING:
-    if (isClosedLim)
-    {
-      closeDuration = millis() - closingStartTime;
-      closeTime++;
-      currentState = DOOR_CLOSED;
-      door_hasChanged = true;
-      Serial.printf("Door Closed. Duration: %u ms\n", closeDuration);
-    }
-    break;
-
+        Serial.printf("Door Cycle Complete. Duration: %u ms. Total Cycles: %u\n", cycleDuration, closeTime);
+      }
+      break;
   }
 }
 
@@ -458,7 +496,8 @@ void vPollingTask(void *pvParams)
         hreg[PLC_slaveID][6] = node.getResponseBuffer(6);
         hreg[PLC_slaveID][7] = node.getResponseBuffer(7);
 
-        doorRuntimeCounter(hreg[PLC_slaveID][0]);
+        // doorRuntimeCounter_AUTO(hreg[PLC_slaveID][0]);
+        doorRuntimeCounter_MANUAL(hreg[PLC_slaveID][0]);
         elevatorRuntimeCounter(hreg[PLC_slaveID][4]);
 
         if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
