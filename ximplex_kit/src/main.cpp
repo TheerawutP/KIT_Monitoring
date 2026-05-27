@@ -2,12 +2,12 @@
 // Libraries
 #include <WiFi.h>
 #include "Arduino.h"
+#include <memory>
 #include <ESPAsyncWebServer.h>
 #include <ESPmDNS.h>
 #include <SPIFFS.h>
 #include <AsyncJson.h>
 #include "wifi_credentials.h"
-#include "WebSocketsServer.h"
 #include "DNSServer.h"
 #include <PubSubClient.h>
 #include <ModbusMaster.h>
@@ -17,25 +17,20 @@
 // #include <HTTPUpdate.h>
 #include <Preferences.h>
 
+#include "communication/ICommunicationService.h"
+#include "communication/FirebaseCommunicationService.h"
+#include "FirebaseConfig.h"
+
+#include "app/AppTypes.h"
+#include "app/DefaultTopics.h"
+#include "app/HardwareConfig.h"
+
 // const char *firmwareURL = "https://raw.githubusercontent.com/TheerawutP/test_OTA/main/MCU.ino.bin";
 // bool shouldUpdateFirmware = false;
 TaskHandle_t pollingTaskHandle = NULL;
 TaskHandle_t publishTaskHandle = NULL;
 
 ModbusMaster node;
-
-#define PIN_RX 16
-#define PIN_TX 17
-#define WIFI_READY 22
-#define slaveNum 2
-#define PLC_slaveID 1
-#define SERVO_slaveID 2
-#define subTopicNum 10
-#define X0_ADD 0
-#define Y0_ADD 4
-
-#define X_size 8 // 8*8 input
-#define Y_size 8 // 8*8 output
 
 uint16_t hreg[8][16];
 
@@ -48,35 +43,23 @@ const int mqtt_port = 1883; // unencrypt
 // topics
 // publish topics
 
-char X_pTopic[128] = "kit/UT_25061/Homy/2F2S_MSW/X_status";
-char Y_pTopic[128] = "kit/UT_25061/Homy/2F2S_MSW/Y_status";
-char hour_meter_runtime_pTopic[128] = "kit/UT_25061/Homy/2F2S_MSW/hour_meter_runtime";
-char open_time_pTopic[128] = "kit/UT_25061/Homy/2F2S_MSW/door_open_time";
-char close_time_pTopic[128] = "kit/UT_25061/Homy/2F2S_MSW/door_close_time";
-char all_status_pTopic[128] = "kit/UT_25061/Homy/2F2S_MSW/all_status";
+char X_pTopic[128] = "";
+char Y_pTopic[128] = "";
+char hour_meter_runtime_pTopic[128] = "";
+char open_time_pTopic[128] = "";
+char close_time_pTopic[128] = "";
+char all_status_pTopic[128] = "";
 // subs topics
-char *listenToAll_sTopic = "kit/UT_25061/#";
+const char *listenToAll_sTopic = DEFAULT_LISTEN_ALL_STOPIC;
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
 SemaphoreHandle_t mqttMutex; // Mutex to protect MQTT client
+SemaphoreHandle_t firebaseMutex; // Mutex to protect Firebase access
 SemaphoreHandle_t hasChangedMutex;
 
-enum read_state
-{
-  PLC,
-  SERVO
-};
-
-enum door_state
-{
-  DOOR_NULL,
-  DOOR_CLOSED,
-  DOOR_OPENING,
-  DOOR_OPEN,
-  DOOR_CLOSING
-};
+TaskHandle_t firebasePublishTaskHandle = NULL;
 
 read_state curr_slave = PLC;
 read_state last_slave = PLC;
@@ -89,19 +72,16 @@ char X_prev[64] = "";
 char Y_prev[64] = "";
 
 bool XY_hasChanged = true;
+bool mqttPublishPending = true;
+bool firebasePublishPending = true;
 uint32_t ChangeSlaveInterval = 500;
+
+bool buildCombinedPayload(char *buffer, size_t bufferSize);
+void setPublishPending();
 
 AsyncWebServer server(80); //
 
-WebSocketsServer m_websocketserver = WebSocketsServer(81);
-String m_websocketserver_text_to_send = "";
-String m_websocketserver_text_to_send_2 = "";
-int m_time_sent_websocketserver_text = millis();
-int m_microsbefore_websocketsendcalled = micros();
-int last_time_loop_called = millis();
-int last_time_sent_websocket_server = millis();
-float m_websocket_send_rate = 1.0; // Hz, how often to send a test point to websocket...
-bool m_send_websocket_test_data_in_loop = false;
+std::unique_ptr<ICommunicationService> g_comm;
 
 // WifiTool object
 int WAIT_FOR_WIFI_TIME_OUT = 6000;
@@ -237,43 +217,40 @@ void setupMQTT()
 
 void isChange(const char *from, uint16_t *data, bool *flag)
 {
-  // We use temporary buffers to format the new data
   char X_temp[64];
   char Y_temp[64];
 
   if (strcmp(from, "PLC") == 0)
-  { // strcmp is the C way to compare char arrays
-
-    // 1. Format X Data (Indices 0-3)
-    // %d is a placeholder for an integer.
-    // This line replaces the entire first loop.
-    snprintf(X_temp, sizeof(X_temp), "%d,%d,%d,%d",
+  {
+    // PLC Octal Mapping:
+    // data[0]: X0-X7 (low byte), X10-X17 (high byte)
+    // data[1]: X20-X27, X30-X37
+    // data[2]: X40-X47, X50-X57
+    // data[3]: X60-X67, X70-X77
+    
+    // We format these as a single hex string for efficient transmission
+    snprintf(X_temp, sizeof(X_temp), "%04X%04X%04X%04X",
              data[0], data[1], data[2], data[3]);
 
-    // 2. Format Y Data (Indices 4-7)
-    // This line replaces the entire second loop.
-    snprintf(Y_temp, sizeof(Y_temp), "%d,%d,%d,%d",
+    // data[4-7]: Y0-Y77 mapping same as above
+    snprintf(Y_temp, sizeof(Y_temp), "%04X%04X%04X%04X",
              data[4], data[5], data[6], data[7]);
 
-    // 3. Compare with previous values
-    // strcmp returns 0 if strings are identical
     if (strcmp(X_temp, X_prev) != 0 || strcmp(Y_temp, Y_prev) != 0)
     {
       *flag = true;
+      setPublishPending();
 
-      // Copy new values to "prev" history
-      // strncpy is safer than strcpy because it respects size
       strncpy(X_prev, X_temp, sizeof(X_prev));
       strncpy(Y_prev, Y_temp, sizeof(Y_prev));
 
-      // Update the global payloads
       strncpy(X_status_payload, X_temp, sizeof(X_status_payload));
       strncpy(Y_status_payload, Y_temp, sizeof(Y_status_payload));
 
       Serial.println("Change Detected!");
-      Serial.print("X: ");
+      Serial.print("X Mask: ");
       Serial.println(X_status_payload);
-      Serial.print("Y: ");
+      Serial.print("Y Mask: ");
       Serial.println(Y_status_payload);
     }
   }
@@ -303,6 +280,11 @@ void elevatorRuntimeCounter(uint16_t y_stat)
     preferences.end();
 
     hour_meter_hasChanged = true;
+    if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
+    {
+      setPublishPending();
+      xSemaphoreGive(hasChangedMutex);
+    }
     startCountingRuntime = false;
 
     Serial.printf("Elevator stopped. Ran for: %u ms\n", runDurationMS);
@@ -397,6 +379,11 @@ void doorRuntimeCounter_MANUAL(uint16_t x_stat)
         closeTime++;
         currentState = DOOR_CLOSED;
         door_hasChanged = true;
+        if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
+        {
+          setPublishPending();
+          xSemaphoreGive(hasChangedMutex);
+        }
 
         Serial.printf("Door Cycle Complete. Duration: %u ms. Total Cycles: %u\n", cycleDuration, closeTime);
       }
@@ -433,6 +420,32 @@ void publishMqtt(const char *topic, const char *msg)
   }
 }
 
+bool buildCombinedPayload(char *buffer, size_t bufferSize)
+{
+  if (!buffer || bufferSize == 0)
+  {
+    return false;
+  }
+
+  StaticJsonDocument<256> doc;
+  doc["x"] = X_status_payload;
+  doc["y"] = Y_status_payload;
+  doc["hr"] = hour_meter_runtime;
+  doc["cl_dur"] = closeDuration;
+  doc["op_dur"] = openDuration;
+  doc["op_time"] = openTime;
+  doc["cl_time"] = closeTime;
+
+  size_t len = serializeJson(doc, buffer, bufferSize);
+  return len > 0;
+}
+
+void setPublishPending()
+{
+  mqttPublishPending = true;
+  firebasePublishPending = true;
+}
+
 void vReconnectTask(void *pvParams)
 {
   for (;;)
@@ -446,7 +459,8 @@ void vReconnectTask(void *pvParams)
         {
           Serial.print("MQTT connecting...");
 
-          String clientId = "ESP32-" + String(random(0xffff), HEX); // Unique ID
+          String clientId = "ESP32-";
+          clientId += String(random(0xffff), HEX); // Unique ID
 
           if (mqttClient.connect(clientId.c_str()))
           {
@@ -531,11 +545,20 @@ void vPublishTask(void *pvParams)
 
     if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
     {
-      if (XY_hasChanged || hour_meter_hasChanged || door_hasChanged)
+      if (mqttPublishPending)
       {
         shouldPublish = true;
-        XY_hasChanged = false;
-        hour_meter_hasChanged = false;
+        mqttPublishPending = false;
+      }
+      xSemaphoreGive(hasChangedMutex);
+    }
+
+    if (shouldPublish)
+    {
+      char combinedPayload[256];
+      if (buildCombinedPayload(combinedPayload, sizeof(combinedPayload)))
+      {
+        publishMqtt(all_status_pTopic, combinedPayload);
 
         if (door_hasChanged)
         {
@@ -546,29 +569,48 @@ void vPublishTask(void *pvParams)
 
           door_hasChanged = false;
         }
+
+        Serial.print("Published Combined to MQTT: ");
+        Serial.println(combinedPayload);
+        Serial.println(currentState);
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+
+void vFirebasePublishTask(void *pvParams)
+{
+  for (;;)
+  {
+    bool shouldPublish = false;
+
+    if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
+    {
+      if (firebasePublishPending)
+      {
+        shouldPublish = true;
+        firebasePublishPending = false;
       }
       xSemaphoreGive(hasChangedMutex);
     }
 
-    if (shouldPublish)
+    if (shouldPublish && g_comm)
     {
-      StaticJsonDocument<256> doc;
-      doc["x"] = X_status_payload;
-      doc["y"] = Y_status_payload;
-      doc["hr"] = hour_meter_runtime;
-      doc["cl_dur"] = closeDuration;
-      doc["op_dur"] = openDuration;
-      doc["op_time"] = openTime;
-      doc["cl_time"] = closeTime;
-
       char combinedPayload[256];
-      serializeJson(doc, combinedPayload);
+      if (buildCombinedPayload(combinedPayload, sizeof(combinedPayload)))
+      {
+        if (xSemaphoreTake(firebaseMutex, portMAX_DELAY) == pdTRUE)
+        {
+          // g_comm->sendStatus(combinedPayload);
+          g_comm->pushHistory("status", combinedPayload);
+          xSemaphoreGive(firebaseMutex);
+        }
 
-      publishMqtt(all_status_pTopic, combinedPayload);
-
-      Serial.print("Published Combined: ");
-      Serial.println(combinedPayload);
-      Serial.println(currentState);
+        Serial.print("Published Combined to Firebase: ");
+        Serial.println(combinedPayload);
+      }
     }
 
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -995,8 +1037,11 @@ void getWifiScanJson(AsyncWebServerRequest *request)
       if (i)
         json += ",";
       json += "{";
-      json += "\"RSSI\":" + String(WiFi.RSSI(i));
-      json += ",\"SSID\":\"" + WiFi.SSID(i) + "\"";
+      json += "\"RSSI\":";
+      json += String(WiFi.RSSI(i));
+      json += ",\"SSID\":\"";
+      json +=  WiFi.SSID(i);
+      json += "\"";
       json += "}";
     }
     WiFi.scanDelete();
@@ -1092,85 +1137,6 @@ void runWifiPortal_after_connected_to_WIFI()
   while (1) // loop until user hits restart... Once credentials saved, won't end up here again unless wifi not connecting!
   {
     process();
-  }
-}
-
-void handle_websocket_text(uint8_t *payload)
-{
-  // do something...
-  Serial.printf("handle_websocket_text called for: %s\n", payload);
-
-  // test JSON parsing...
-  // char m_JSONMessage[] = "{\"Key1\":123,\"Key2\",345}";
-  // StaticJsonDocument<1000> m_JSONdoc;
-  // deserializeJson(m_JSONdoc, m_JSONMessage); // m_JSONdoc is now a json object
-  // int m_key1_value = m_JSONdoc["Key1"];
-  // Serial.println(m_key1_value);
-
-  // Parse JSON payload
-  StaticJsonDocument<1000> m_JSONdoc_from_payload;
-  DeserializationError m_error = deserializeJson(m_JSONdoc_from_payload, payload); // m_JSONdoc is now a json object
-  if (m_error)
-  {
-    Serial.println("deserializeJson() failed with code ");
-    Serial.println(m_error.c_str());
-  }
-  // Serial.println(m_key2_value);
-  // now to iterate over (unknown) keys, we have to cast the StaticJsonDocument object into a JsonObject:
-  // see https://techtutorialsx.com/2019/07/09/esp32-arduinojson-printing-the-keys-of-the-jsondocument/
-  JsonObject m_JsonObject_from_payload = m_JSONdoc_from_payload.as<JsonObject>();
-  // Iterate and print to serial:
-  //   uint8_t LMPgain_control_panel = 6; // Feedback resistor of TIA.
-  // int num_adc_readings_to_average_control_panel = 1;
-  // int sweep_param_delayTime_ms_control_panel = 50;
-  // int cell_voltage_control_panel = 100;
-
-  // if (true == false) // if key = "change_cell_voltage_to"
-  // {
-  //   m_websocket_send_rate = (float)atof((const char *)&payload[0]); // adjust data send rate used in loop
-  // }
-  // deserializeJson(m_JSONdoc, payload); // m_JSONdoc is now a json object that was payload delivered by websocket message
-}
-
-void onWebSocketEvent(uint8_t num,
-                      WStype_t type,
-                      uint8_t *payload,
-                      size_t length)
-{
-  // Serial.println("onWebSocketEvent called");
-  // Figure out the type of WebSocket event
-  switch (type)
-  {
-
-  // Client has disconnected
-  case WStype_DISCONNECTED:
-    Serial.printf("[%u] Disconnected!\n", num);
-    break;
-
-  // New client has connected
-  case WStype_CONNECTED:
-  {
-    IPAddress ip = m_websocketserver.remoteIP(num);
-    Serial.printf("[%u] Connection from ", num);
-    Serial.println(ip.toString());
-  }
-  break;
-
-  case WStype_TEXT:
-    Serial.printf("[%u] Received text: %s\n", num, payload);
-    handle_websocket_text(payload);
-
-    break;
-
-  // For everything else: do nothing
-  case WStype_BIN:
-  case WStype_ERROR:
-  case WStype_FRAGMENT_TEXT_START:
-  case WStype_FRAGMENT_BIN_START:
-  case WStype_FRAGMENT:
-  case WStype_FRAGMENT_FIN:
-  default:
-    break;
   }
 }
 
@@ -1390,8 +1356,58 @@ void setup()
   server.reset(); // try putting this in setup
   configureserver();
 
-  m_websocketserver.begin();
-  m_websocketserver.onEvent(onWebSocketEvent); // Start WebSocket server and assign callback
+  // Generate unique device path based on MAC address
+  String mac = WiFi.macAddress();
+  mac.replace(":", "");
+  String dynamicDevicePath = "/devices/ESP32_";
+  dynamicDevicePath += mac;
+  Serial.print("Dynamic Firebase Device Path: ");
+  Serial.println(dynamicDevicePath);
+
+  g_comm.reset(new FirebaseCommunicationService(
+      FIREBASE_API_KEY,
+      FIREBASE_DATABASE_URL,
+      FIREBASE_USER_EMAIL,
+      FIREBASE_USER_PASSWORD,
+      dynamicDevicePath.c_str(),
+      FIREBASE_STATUS_UPDATE_INTERVAL));
+
+  // Set up command callback for the multi-tenant handshake
+  g_comm->setCommandCallback([](const char *id, const char *cmd, const char *data)
+                             {
+    Serial.printf("Received Command: %s (ID: %s, Data: %s)\n", cmd, id, data);
+    
+    bool success = false;
+    if (strcmp(cmd, "RESET_HOUR_METER") == 0) {
+      hour_meter_runtime = 0;
+      preferences.begin("my-config", false);
+      preferences.putUInt("hourmeter", 0);
+      preferences.end();
+      success = true;
+    } 
+    else if (strcmp(cmd, "RESET_DOOR_COUNT") == 0) {
+      openTime = 0;
+      closeTime = 0;
+      preferences.begin("my-config", false);
+      preferences.putInt("opTime", 0);
+      preferences.putInt("clTime", 0);
+      preferences.end();
+      success = true;
+    }
+    else if (strcmp(cmd, "REBOOT") == 0) {
+      g_comm->acknowledgeCommand(id, "SUCCESS");
+      delay(500);
+      ESP.restart();
+      return; // Won't reach here
+    }
+
+    if (success) {
+      g_comm->acknowledgeCommand(id, "SUCCESS");
+    } else {
+      g_comm->acknowledgeCommand(id, "UNKNOWN_COMMAND");
+    } });
+
+  g_comm->begin();
 
   Serial1.begin(38400, SERIAL_8E1, PIN_RX, PIN_TX);
   node.begin(PLC_slaveID, Serial1);
@@ -1399,6 +1415,19 @@ void setup()
   // wifiClient.setInsecure();
   Serial.println(WiFi.localIP());
   setupMQTT();
+
+  strncpy(X_pTopic, DEFAULT_X_PTOPIC, sizeof(X_pTopic) - 1);
+  X_pTopic[sizeof(X_pTopic) - 1] = '\0';
+  strncpy(Y_pTopic, DEFAULT_Y_PTOPIC, sizeof(Y_pTopic) - 1);
+  Y_pTopic[sizeof(Y_pTopic) - 1] = '\0';
+  strncpy(hour_meter_runtime_pTopic, DEFAULT_HOUR_METER_RUNTIME_PTOPIC, sizeof(hour_meter_runtime_pTopic) - 1);
+  hour_meter_runtime_pTopic[sizeof(hour_meter_runtime_pTopic) - 1] = '\0';
+  strncpy(open_time_pTopic, DEFAULT_OPEN_TIME_PTOPIC, sizeof(open_time_pTopic) - 1);
+  open_time_pTopic[sizeof(open_time_pTopic) - 1] = '\0';
+  strncpy(close_time_pTopic, DEFAULT_CLOSE_TIME_PTOPIC, sizeof(close_time_pTopic) - 1);
+  close_time_pTopic[sizeof(close_time_pTopic) - 1] = '\0';
+  strncpy(all_status_pTopic, DEFAULT_ALL_STATUS_PTOPIC, sizeof(all_status_pTopic) - 1);
+  all_status_pTopic[sizeof(all_status_pTopic) - 1] = '\0';
 
   preferences.begin("my-config", false); // read only
   hour_meter_runtime = preferences.getUInt("hourmeter", 0);
@@ -1421,10 +1450,12 @@ void setup()
 
   pinMode(WIFI_READY, OUTPUT);
   mqttMutex = xSemaphoreCreateMutex();
+  firebaseMutex = xSemaphoreCreateMutex();
   hasChangedMutex = xSemaphoreCreateMutex();
   xTaskCreate(vPollingTask, "PollingTask", 4096, NULL, 3, &pollingTaskHandle);
   xTaskCreate(vReconnectTask, "ReconnectTask", 4096, NULL, 3, NULL);
   xTaskCreate(vPublishTask, "PublishTask", 4096, NULL, 3, &publishTaskHandle);
+  xTaskCreate(vFirebasePublishTask, "FirebasePublishTask", 9192, NULL, 3, &firebasePublishTaskHandle);
 
   Serial.print("Heap free memory (in bytes)= ");
   Serial.println(ESP.getFreeHeap());
@@ -1434,6 +1465,28 @@ void setup()
 void loop()
 {
 
-  m_websocketserver.loop();
+  if (g_comm)
+  {
+    if (xSemaphoreTake(firebaseMutex, portMAX_DELAY) == pdTRUE)
+    {
+      g_comm->loop();
+      xSemaphoreGive(firebaseMutex);
+    }
+  }
+
+  // Check for serial input to force Firebase publish
+  if (Serial.available())
+  {
+    char c = Serial.read();
+    if (c == 'f' || c == 'F')
+    {
+      if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
+      {
+        firebasePublishPending = true;
+        xSemaphoreGive(hasChangedMutex);
+      }
+      Serial.println("Forced Firebase publish triggered");
+    }
+  }
 
 }

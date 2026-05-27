@@ -1,0 +1,31 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        // A user can only read/write their own profile and device list
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    },
+    "devices": {
+      "$device_id": {
+        // Read/Write access is ONLY granted if the device_id exists in the user's managed devices list
+        ".read": "root.child('users').child(auth.uid).child('devices').child($device_id).exists()",
+        ".write": "root.child('users').child(auth.uid).child('devices').child($device_id).exists()",
+        
+        "status": {
+          // The ESP32 (acting as a 'device') should have its own auth or we can use a secret token
+          // For simplicity in this prototype, we assume the user/admin manages it.
+          ".validate": "newData.hasChildren(['x', 'y', 'hr'])"
+        },
+        
+        "commands": {
+          "current": {
+            // Commands must have a unique ID and a type
+            ".validate": "newData.hasChildren(['id', 'type'])"
+          }
+        }
+      }
+    }
+  }
+}
