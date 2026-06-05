@@ -1451,18 +1451,13 @@ void setup()
   snprintf(ack_pTopic, sizeof(ack_pTopic), "elevator/%s/ack", ELEVATOR_ID);
   snprintf(all_status_pTopic, sizeof(all_status_pTopic), "elevator/%s/state", ELEVATOR_ID);
 
+  // Legacy topics (Optional fallback, but prioritizing new ones)
   strncpy(X_pTopic, DEFAULT_X_PTOPIC, sizeof(X_pTopic) - 1);
   X_pTopic[sizeof(X_pTopic) - 1] = '\0';
   strncpy(Y_pTopic, DEFAULT_Y_PTOPIC, sizeof(Y_pTopic) - 1);
   Y_pTopic[sizeof(Y_pTopic) - 1] = '\0';
   strncpy(hour_meter_runtime_pTopic, DEFAULT_HOUR_METER_RUNTIME_PTOPIC, sizeof(hour_meter_runtime_pTopic) - 1);
   hour_meter_runtime_pTopic[sizeof(hour_meter_runtime_pTopic) - 1] = '\0';
-  strncpy(open_time_pTopic, DEFAULT_OPEN_TIME_PTOPIC, sizeof(open_time_pTopic) - 1);
-  open_time_pTopic[sizeof(open_time_pTopic) - 1] = '\0';
-  strncpy(close_time_pTopic, DEFAULT_CLOSE_TIME_PTOPIC, sizeof(close_time_pTopic) - 1);
-  close_time_pTopic[sizeof(close_time_pTopic) - 1] = '\0';
-  strncpy(all_status_pTopic, DEFAULT_ALL_STATUS_PTOPIC, sizeof(all_status_pTopic) - 1);
-  all_status_pTopic[sizeof(all_status_pTopic) - 1] = '\0';
 
   preferences.begin("my-config", false); // read only
   hour_meter_runtime = preferences.getUInt("hourmeter", 0);
