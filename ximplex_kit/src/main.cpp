@@ -35,20 +35,25 @@ ModbusMaster node;
 uint16_t hreg[8][16];
 
 // credential
+const char *ELEVATOR_ID = "E1"; // Hardcoded for now
 const char *ssid = "Flinkone 1-2.4G";
 const char *password = "ff112335";
-const char *mqtt_broker = "kit.flinkone.com";
+// const char *mqtt_broker = "kit.flinkone.com";
+// const int mqtt_port = 1883; // unencrypt
+const char *mqtt_broker = "158.101.156.71";
 const int mqtt_port = 1883; // unencrypt
 
 // topics
 // publish topics
-
 char X_pTopic[128] = "";
 char Y_pTopic[128] = "";
 char hour_meter_runtime_pTopic[128] = "";
 char open_time_pTopic[128] = "";
 char close_time_pTopic[128] = "";
 char all_status_pTopic[128] = "";
+char cmd_sTopic[128] = "";
+char ack_pTopic[128] = "";
+
 // subs topics
 const char *listenToAll_sTopic = DEFAULT_LISTEN_ALL_STOPIC;
 
@@ -162,49 +167,73 @@ void handleChangeTopic(byte *payload, unsigned int length)
   preferences.end();
 }
 
+void sendAck(const char *msgId, bool ok, const char *error = NULL)
+{
+  StaticJsonDocument<256> doc;
+  doc["msgId"] = msgId;
+  doc["ts"] = millis();
+  doc["ok"] = ok;
+  if (error) doc["error"] = error;
+
+  char buffer[256];
+  serializeJson(doc, buffer);
+  publishMqtt(ack_pTopic, buffer);
+}
+
 void callback(char *topic, byte *payload, unsigned int length)
 {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] Content: ");
-
-  for (int i = 0; i < length; i++)
-  {
-    Serial.print((char)payload[i]);
-  }
+  Serial.printf("Message arrived [%s] Content: ", topic);
+  for (int i = 0; i < length; i++) Serial.print((char)payload[i]);
   Serial.println();
 
-  if (strcmp(topic, "kit/print") == 0)
+  // Handle Secure Bridge Commands
+  if (strcmp(topic, cmd_sTopic) == 0)
   {
-    Serial.print("Print command received: ");
-    for (int i = 0; i < length; i++)
-      Serial.print((char)payload[i]);
-    Serial.println();
+    StaticJsonDocument<512> doc;
+    DeserializationError error = deserializeJson(doc, payload, length);
+
+    if (error)
+    {
+      Serial.println("JSON Parse failed");
+      return;
+    }
+
+    const char *msgId = doc["msgId"] | "";
+    const char *type = doc["type"] | "";
+    const char *userEmail = doc["issuedBy"]["email"] | "unknown";
+
+    Serial.printf("🚀 Command Received: %s (msgId: %s) by %s\n", type, msgId, userEmail);
+
+    bool success = false;
+    if (strcmp(type, "goToFloor") == 0)
+    {
+      int floor = doc["payload"]["floor"] | -1;
+      Serial.printf("Action: Moving to floor %d\n", floor);
+      // TODO: Implement PLC logic for moving to floor
+      success = true;
+    }
+    else if (strcmp(type, "openDoor") == 0)
+    {
+      Serial.println("Action: Opening Door");
+      success = true;
+    }
+    else if (strcmp(type, "resetHourMeter") == 0)
+    {
+      hour_meter_runtime = 0;
+      preferences.begin("my-config", false);
+      preferences.putInt("hourmeter", 0);
+      preferences.end();
+      success = true;
+    }
+
+    sendAck(msgId, success);
+    return;
   }
 
+  // Legacy command handling (Fallback)
   if (strcmp(topic, "kit/UT_25061/changeTopic") == 0)
   {
     handleChangeTopic(payload, length);
-  }
-
-  if (strcmp(topic, "kit/UT_25061/resetHourMeter") == 0)
-  {
-    hour_meter_runtime = 0;
-    preferences.begin("my-config", false);
-    preferences.putInt("hourmeter", hour_meter_runtime);
-    preferences.end();
-    Serial.println("Hour meter runtime reset to 0.");
-  }
-
-  if (strcmp(topic, "kit/UT_25061/resetOpenCloseCount") == 0)
-  {
-    openTime = 0;
-    closeTime = 0;
-    preferences.begin("my-config", false);
-    preferences.putInt("opTime", openTime);
-    preferences.putInt("clTime", closeTime);
-    preferences.end();
-    Serial.println("Door open/close counters reset to 0.");
   }
 }
 
@@ -466,6 +495,7 @@ void vReconnectTask(void *pvParams)
           {
             Serial.println("connected");
             mqttClient.subscribe(listenToAll_sTopic);
+            mqttClient.subscribe(cmd_sTopic); // Subscribe to secure bridge commands
           }
           else
           {
@@ -1415,6 +1445,11 @@ void setup()
   // wifiClient.setInsecure();
   Serial.println(WiFi.localIP());
   setupMQTT();
+
+  // Initialize secure topics based on ELEVATOR_ID
+  snprintf(cmd_sTopic, sizeof(cmd_sTopic), "elevator/%s/cmd", ELEVATOR_ID);
+  snprintf(ack_pTopic, sizeof(ack_pTopic), "elevator/%s/ack", ELEVATOR_ID);
+  snprintf(all_status_pTopic, sizeof(all_status_pTopic), "elevator/%s/state", ELEVATOR_ID);
 
   strncpy(X_pTopic, DEFAULT_X_PTOPIC, sizeof(X_pTopic) - 1);
   X_pTopic[sizeof(X_pTopic) - 1] = '\0';
