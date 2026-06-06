@@ -167,6 +167,8 @@ void handleChangeTopic(byte *payload, unsigned int length)
   preferences.end();
 }
 
+void publishMqtt(const char *topic, const char *msg);
+
 void sendAck(const char *msgId, bool ok, const char *error = NULL)
 {
   StaticJsonDocument<256> doc;
@@ -205,17 +207,32 @@ void callback(char *topic, byte *payload, unsigned int length)
     Serial.printf("🚀 Command Received: %s (msgId: %s) by %s\n", type, msgId, userEmail);
 
     bool success = false;
+    uint16_t reg = 0xFFFF;
+    uint16_t bit = 0;
+
     if (strcmp(type, "goToFloor") == 0)
     {
       int floor = doc["payload"]["floor"] | -1;
       Serial.printf("Action: Moving to floor %d\n", floor);
-      // TODO: Implement PLC logic for moving to floor
-      success = true;
+      if (floor == 1) { reg = 0; bit = 1; }      // X1
+      else if (floor == 2) { reg = 0; bit = 2; } // X2
+      else if (floor == 3) { reg = 0; bit = 3; } // X3
+      else if (floor == 4) { reg = 1; bit = 9; } // X31
     }
     else if (strcmp(type, "openDoor") == 0)
     {
       Serial.println("Action: Opening Door");
-      success = true;
+      reg = 2; bit = 0; // X40
+    }
+    else if (strcmp(type, "closeDoor") == 0)
+    {
+      Serial.println("Action: Closing Door");
+      reg = 2; bit = 1; // X41
+    }
+    else if (strcmp(type, "holdDoor") == 0)
+    {
+      Serial.println("Action: Holding Door");
+      reg = 0; bit = 9; // X11
     }
     else if (strcmp(type, "resetHourMeter") == 0)
     {
@@ -223,6 +240,21 @@ void callback(char *topic, byte *payload, unsigned int length)
       preferences.begin("my-config", false);
       preferences.putInt("hourmeter", 0);
       preferences.end();
+      success = true;
+    }
+
+    if (reg != 0xFFFF)
+    {
+      // Pulse logic: Set bit HIGH, wait 200ms, set bit LOW
+      // Register address = X0_ADD + reg
+      uint16_t addr = X0_ADD + reg;
+      uint16_t currentVal = hreg[PLC_slaveID][reg];
+      
+      // Set bit HIGH
+      node.writeSingleRegister(addr, currentVal | (1 << bit));
+      delay(200);
+      // Set bit LOW
+      node.writeSingleRegister(addr, currentVal & ~(1 << bit));
       success = true;
     }
 
@@ -456,9 +488,22 @@ bool buildCombinedPayload(char *buffer, size_t bufferSize)
     return false;
   }
 
+  // Calculate current floor from Y registers
+  // data[4]: Y0-Y7 (low byte), Y10-Y17 (high byte)
+  // data[5]: Y20-Y27, Y30-Y37
+  int currentFloor = 0;
+  uint16_t y0 = hreg[PLC_slaveID][4];
+  uint16_t y1 = hreg[PLC_slaveID][5];
+
+  if (y0 & (1 << 7)) currentFloor = 1;      // Y7
+  else if (y0 & (1 << 8)) currentFloor = 2; // Y10
+  else if (y0 & (1 << 9)) currentFloor = 3; // Y11
+  else if (y1 & (1 << 4)) currentFloor = 4; // Y24
+
   StaticJsonDocument<256> doc;
   doc["x"] = X_status_payload;
   doc["y"] = Y_status_payload;
+  doc["floor"] = currentFloor;
   doc["hr"] = hour_meter_runtime;
   doc["cl_dur"] = closeDuration;
   doc["op_dur"] = openDuration;
@@ -1408,7 +1453,34 @@ void setup()
     Serial.printf("Received Command: %s (ID: %s, Data: %s)\n", cmd, id, data);
     
     bool success = false;
-    if (strcmp(cmd, "RESET_HOUR_METER") == 0) {
+    uint16_t reg = 0xFFFF;
+    uint16_t bit = 0;
+
+    if (strcmp(cmd, "goToFloor") == 0) {
+      // Data might be a simple number string or JSON "{\"floor\": n}"
+      int floor = atoi(data);
+      if (floor == 0 && data[0] == '{') {
+         StaticJsonDocument<128> doc;
+         if (deserializeJson(doc, data) == DeserializationError::Ok) {
+           floor = doc["floor"] | -1;
+         }
+      }
+      Serial.printf("Action: Moving to floor %d\n", floor);
+      if (floor == 1) { reg = 0; bit = 1; }
+      else if (floor == 2) { reg = 0; bit = 2; }
+      else if (floor == 3) { reg = 0; bit = 3; }
+      else if (floor == 4) { reg = 1; bit = 9; }
+    }
+    else if (strcmp(cmd, "openDoor") == 0) {
+      reg = 2; bit = 0;
+    }
+    else if (strcmp(cmd, "closeDoor") == 0) {
+      reg = 2; bit = 1;
+    }
+    else if (strcmp(cmd, "holdDoor") == 0) {
+      reg = 0; bit = 9;
+    }
+    else if (strcmp(cmd, "RESET_HOUR_METER") == 0) {
       hour_meter_runtime = 0;
       preferences.begin("my-config", false);
       preferences.putUInt("hourmeter", 0);
@@ -1431,10 +1503,19 @@ void setup()
       return; // Won't reach here
     }
 
+    if (reg != 0xFFFF) {
+      uint16_t addr = X0_ADD + reg;
+      uint16_t currentVal = hreg[PLC_slaveID][reg];
+      node.writeSingleRegister(addr, currentVal | (1 << bit));
+      delay(200);
+      node.writeSingleRegister(addr, currentVal & ~(1 << bit));
+      success = true;
+    }
+
     if (success) {
       g_comm->acknowledgeCommand(id, "SUCCESS");
     } else {
-      g_comm->acknowledgeCommand(id, "UNKNOWN_COMMAND");
+      g_comm->acknowledgeCommand(id, "UNKNOWN_COMMAND_OR_FAILED");
     } });
 
   g_comm->begin();
