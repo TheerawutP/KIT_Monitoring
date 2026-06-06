@@ -207,32 +207,32 @@ void callback(char *topic, byte *payload, unsigned int length)
     Serial.printf("🚀 Command Received: %s (msgId: %s) by %s\n", type, msgId, userEmail);
 
     bool success = false;
-    uint16_t reg = 0xFFFF;
-    uint16_t bit = 0;
+    int targetBit = -1;
+    const uint16_t controlAddr = 20;
 
     if (strcmp(type, "goToFloor") == 0)
     {
       int floor = doc["payload"]["floor"] | -1;
       Serial.printf("Action: Moving to floor %d\n", floor);
-      if (floor == 1) { reg = 0; bit = 1; }      // X1
-      else if (floor == 2) { reg = 0; bit = 2; } // X2
-      else if (floor == 3) { reg = 0; bit = 3; } // X3
-      else if (floor == 4) { reg = 1; bit = 9; } // X31
+      if (floor == 1) targetBit = 0;
+      else if (floor == 2) targetBit = 1;
+      else if (floor == 3) targetBit = 2;
+      else if (floor == 4) targetBit = 4;
     }
     else if (strcmp(type, "openDoor") == 0)
     {
       Serial.println("Action: Opening Door");
-      reg = 2; bit = 0; // X40
+      targetBit = 11;
     }
     else if (strcmp(type, "closeDoor") == 0)
     {
       Serial.println("Action: Closing Door");
-      reg = 2; bit = 1; // X41
+      targetBit = 12;
     }
     else if (strcmp(type, "holdDoor") == 0)
     {
       Serial.println("Action: Holding Door");
-      reg = 0; bit = 9; // X11
+      targetBit = 10;
     }
     else if (strcmp(type, "resetHourMeter") == 0)
     {
@@ -243,18 +243,12 @@ void callback(char *topic, byte *payload, unsigned int length)
       success = true;
     }
 
-    if (reg != 0xFFFF)
+    if (targetBit != -1)
     {
-      // Pulse logic: Set bit HIGH, wait 200ms, set bit LOW
-      // Register address = X0_ADD + reg
-      uint16_t addr = X0_ADD + reg;
-      uint16_t currentVal = hreg[PLC_slaveID][reg];
-      
-      // Set bit HIGH
-      node.writeSingleRegister(addr, currentVal | (1 << bit));
+      // Pulse logic: Set bit HIGH, wait 200ms, set bit LOW on address 20
+      node.writeSingleRegister(controlAddr, (1 << targetBit));
       delay(200);
-      // Set bit LOW
-      node.writeSingleRegister(addr, currentVal & ~(1 << bit));
+      node.writeSingleRegister(controlAddr, 0);
       success = true;
     }
 
@@ -1453,8 +1447,8 @@ void setup()
     Serial.printf("Received Command: %s (ID: %s, Data: %s)\n", cmd, id, data);
     
     bool success = false;
-    uint16_t reg = 0xFFFF;
-    uint16_t bit = 0;
+    int targetBit = -1;
+    const uint16_t controlAddr = 20;
 
     if (strcmp(cmd, "goToFloor") == 0) {
       // Data might be a simple number string or JSON "{\"floor\": n}"
@@ -1462,23 +1456,23 @@ void setup()
       if (floor == 0 && data[0] == '{') {
          StaticJsonDocument<128> doc;
          if (deserializeJson(doc, data) == DeserializationError::Ok) {
-           floor = doc["floor"] | -1;
+           floor = doc["payload"]["floor"] | -1;
          }
       }
       Serial.printf("Action: Moving to floor %d\n", floor);
-      if (floor == 1) { reg = 0; bit = 1; }
-      else if (floor == 2) { reg = 0; bit = 2; }
-      else if (floor == 3) { reg = 0; bit = 3; }
-      else if (floor == 4) { reg = 1; bit = 9; }
+      if (floor == 1) targetBit = 0;
+      else if (floor == 2) targetBit = 1;
+      else if (floor == 3) targetBit = 2;
+      else if (floor == 4) targetBit = 4;
     }
     else if (strcmp(cmd, "openDoor") == 0) {
-      reg = 2; bit = 0;
+      targetBit = 11;
     }
     else if (strcmp(cmd, "closeDoor") == 0) {
-      reg = 2; bit = 1;
+      targetBit = 12;
     }
     else if (strcmp(cmd, "holdDoor") == 0) {
-      reg = 0; bit = 9;
+      targetBit = 10;
     }
     else if (strcmp(cmd, "RESET_HOUR_METER") == 0) {
       hour_meter_runtime = 0;
@@ -1503,12 +1497,11 @@ void setup()
       return; // Won't reach here
     }
 
-    if (reg != 0xFFFF) {
-      uint16_t addr = X0_ADD + reg;
-      uint16_t currentVal = hreg[PLC_slaveID][reg];
-      node.writeSingleRegister(addr, currentVal | (1 << bit));
+    if (targetBit != -1) {
+      // Pulse logic: Set bit HIGH, wait 200ms, set bit LOW on address 20
+      node.writeSingleRegister(controlAddr, (1 << targetBit));
       delay(200);
-      node.writeSingleRegister(addr, currentVal & ~(1 << bit));
+      node.writeSingleRegister(controlAddr, 0);
       success = true;
     }
 
