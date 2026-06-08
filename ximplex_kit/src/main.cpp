@@ -217,7 +217,7 @@ void callback(char *topic, byte *payload, unsigned int length)
       if (floor == 1) targetBit = 0;
       else if (floor == 2) targetBit = 1;
       else if (floor == 3) targetBit = 2;
-      else if (floor == 4) targetBit = 4;
+      else if (floor == 4) targetBit = 3;
     }
     else if (strcmp(type, "openDoor") == 0)
     {
@@ -247,8 +247,10 @@ void callback(char *topic, byte *payload, unsigned int length)
     {
       // Pulse logic: Set bit HIGH, wait 200ms, set bit LOW on address 20
       node.writeSingleRegister(controlAddr, (1 << targetBit));
-      delay(200);
+      Serial.printf("Set bit %d HIGH at control address %d\n", targetBit, controlAddr);
+      vTaskDelay(pdMS_TO_TICKS(1000));      
       node.writeSingleRegister(controlAddr, 0);
+      Serial.printf("Set control address %d LOW\n", controlAddr); 
       success = true;
     }
 
@@ -665,7 +667,7 @@ void vFirebasePublishTask(void *pvParams)
       xSemaphoreGive(hasChangedMutex);
     }
 
-    if (shouldPublish && g_comm)
+    if (shouldPublish && g_comm && WiFi.status() == WL_CONNECTED)
     {
       char combinedPayload[256];
       if (buildCombinedPayload(combinedPayload, sizeof(combinedPayload)))
@@ -1559,7 +1561,7 @@ void setup()
   xTaskCreate(vPollingTask, "PollingTask", 4096, NULL, 4, &pollingTaskHandle);
   xTaskCreate(vReconnectTask, "ReconnectTask", 4096, NULL, 3, NULL);
   xTaskCreate(vPublishTask, "PublishTask", 4096, NULL, 3, &publishTaskHandle);
-  xTaskCreate(vFirebasePublishTask, "FirebasePublishTask", 9192, NULL, 3, &firebasePublishTaskHandle);
+  // xTaskCreate(vFirebasePublishTask, "FirebasePublishTask", 9192, NULL, 3, &firebasePublishTaskHandle);
 
   Serial.print("Heap free memory (in bytes)= ");
   Serial.println(ESP.getFreeHeap());
@@ -1571,26 +1573,11 @@ void loop()
 
   if (g_comm)
   {
-    if (xSemaphoreTake(firebaseMutex, portMAX_DELAY) == pdTRUE)
+    if (xSemaphoreTake(firebaseMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
     {
       g_comm->loop();
       xSemaphoreGive(firebaseMutex);
     }
   }
-
-  // Check for serial input to force Firebase publish
-  if (Serial.available())
-  {
-    char c = Serial.read();
-    if (c == 'f' || c == 'F')
-    {
-      if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
-      {
-        firebasePublishPending = true;
-        xSemaphoreGive(hasChangedMutex);
-      }
-      Serial.println("Forced Firebase publish triggered");
-    }
-  }
-
+  vTaskDelay(pdMS_TO_TICKS(1));
 }
