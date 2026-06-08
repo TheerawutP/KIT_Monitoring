@@ -583,7 +583,7 @@ void vPollingTask(void *pvParams)
         doorRuntimeCounter_MANUAL(hreg[PLC_slaveID][0]);
         elevatorRuntimeCounter(hreg[PLC_slaveID][4]);
 
-        if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
+        if (xSemaphoreTake(hasChangedMutex, pdMS_TO_TICKS(100)) == pdTRUE)
         {
           isChange("PLC", hreg[PLC_slaveID], &XY_hasChanged);
           xSemaphoreGive(hasChangedMutex);
@@ -1556,7 +1556,7 @@ void setup()
   mqttMutex = xSemaphoreCreateRecursiveMutex();
   firebaseMutex = xSemaphoreCreateMutex();
   hasChangedMutex = xSemaphoreCreateMutex();
-  xTaskCreate(vPollingTask, "PollingTask", 4096, NULL, 3, &pollingTaskHandle);
+  xTaskCreate(vPollingTask, "PollingTask", 4096, NULL, 4, &pollingTaskHandle);
   xTaskCreate(vReconnectTask, "ReconnectTask", 4096, NULL, 3, NULL);
   xTaskCreate(vPublishTask, "PublishTask", 4096, NULL, 3, &publishTaskHandle);
   xTaskCreate(vFirebasePublishTask, "FirebasePublishTask", 9192, NULL, 3, &firebasePublishTaskHandle);
