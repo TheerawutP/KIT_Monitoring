@@ -456,7 +456,7 @@ void updateTopicFromPrefs(const char *key, char *buffer, size_t bufferSize)
 
 void publishMqtt(const char *topic, const char *msg)
 {
-  if (xSemaphoreTake(mqttMutex, portMAX_DELAY) == pdTRUE)
+  if (xSemaphoreTakeRecursive(mqttMutex, portMAX_DELAY) == pdTRUE)
   {
     if (mqttClient.connected())
     {
@@ -471,7 +471,7 @@ void publishMqtt(const char *topic, const char *msg)
       }
       // Serial.printf("Pub: %s -> %s\n", topic, msg);
     }
-    xSemaphoreGive(mqttMutex);
+    xSemaphoreGiveRecursive(mqttMutex);
   }
 }
 
@@ -521,7 +521,7 @@ void vReconnectTask(void *pvParams)
     if (WiFi.status() == WL_CONNECTED)
     {
       // Protect Check/Connect with Mutex
-      if (xSemaphoreTake(mqttMutex, portMAX_DELAY) == pdTRUE)
+      if (xSemaphoreTakeRecursive(mqttMutex, portMAX_DELAY) == pdTRUE)
       {
         if (!mqttClient.connected())
         {
@@ -548,7 +548,7 @@ void vReconnectTask(void *pvParams)
           mqttClient.loop();
         }
 
-        xSemaphoreGive(mqttMutex);
+        xSemaphoreGiveRecursive(mqttMutex);
       }
     }
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -1553,7 +1553,7 @@ void setup()
   Serial.printf("Close Time Topic: %s\n", close_time_pTopic);
 
   pinMode(WIFI_READY, OUTPUT);
-  mqttMutex = xSemaphoreCreateMutex();
+  mqttMutex = xSemaphoreCreateRecursiveMutex();
   firebaseMutex = xSemaphoreCreateMutex();
   hasChangedMutex = xSemaphoreCreateMutex();
   xTaskCreate(vPollingTask, "PollingTask", 4096, NULL, 3, &pollingTaskHandle);
