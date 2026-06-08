@@ -63,6 +63,7 @@ PubSubClient mqttClient(wifiClient);
 SemaphoreHandle_t mqttMutex; // Mutex to protect MQTT client
 SemaphoreHandle_t firebaseMutex; // Mutex to protect Firebase access
 SemaphoreHandle_t hasChangedMutex;
+SemaphoreHandle_t modbusMutex; // Mutex to protect Modbus communication
 
 TaskHandle_t firebasePublishTaskHandle = NULL;
 
@@ -246,12 +247,20 @@ void callback(char *topic, byte *payload, unsigned int length)
     if (targetBit != -1)
     {
       // Pulse logic: Set bit HIGH, wait 200ms, set bit LOW on address 20
-      node.writeSingleRegister(controlAddr, (1 << targetBit));
-      Serial.printf("Set bit %d HIGH at control address %d\n", targetBit, controlAddr);
-      vTaskDelay(pdMS_TO_TICKS(1000));      
-      node.writeSingleRegister(controlAddr, 0);
-      Serial.printf("Set control address %d LOW\n", controlAddr); 
-      success = true;
+      if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+        node.writeSingleRegister(controlAddr, (1 << targetBit));
+        Serial.printf("Set bit %d HIGH at control address %d\n", targetBit, controlAddr);
+        xSemaphoreGive(modbusMutex);
+        
+        vTaskDelay(pdMS_TO_TICKS(1000));      
+        
+        if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+          node.writeSingleRegister(controlAddr, 0);
+          Serial.printf("Set control address %d LOW\n", controlAddr); 
+          xSemaphoreGive(modbusMutex);
+          success = true;
+        }
+      }
     }
 
     sendAck(msgId, success);
@@ -562,48 +571,44 @@ void vPollingTask(void *pvParams)
   for (;;)
   {
     uint32_t result;
-    // if (xSemaphoreTake(hregMutex, portMAX_DELAY) == pdTRUE) {
     digitalWrite(WIFI_READY, HIGH);
-    switch (curr_slave)
+    
+    if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(200)) == pdTRUE)
     {
-    case PLC:
-      node.begin(PLC_slaveID, Serial1);
-      result = node.readHoldingRegisters(X0_ADD, 8); // start hreg address, num of read
-      if (result == node.ku8MBSuccess)
+      switch (curr_slave)
       {
-        hreg[PLC_slaveID][0] = node.getResponseBuffer(0);
-        hreg[PLC_slaveID][1] = node.getResponseBuffer(1);
-        hreg[PLC_slaveID][2] = node.getResponseBuffer(2);
-        hreg[PLC_slaveID][3] = node.getResponseBuffer(3);
-
-        hreg[PLC_slaveID][4] = node.getResponseBuffer(4);
-        hreg[PLC_slaveID][5] = node.getResponseBuffer(5);
-        hreg[PLC_slaveID][6] = node.getResponseBuffer(6);
-        hreg[PLC_slaveID][7] = node.getResponseBuffer(7);
-
-        // doorRuntimeCounter_AUTO(hreg[PLC_slaveID][0]);
-        doorRuntimeCounter_MANUAL(hreg[PLC_slaveID][0]);
-        elevatorRuntimeCounter(hreg[PLC_slaveID][4]);
-
-        if (xSemaphoreTake(hasChangedMutex, pdMS_TO_TICKS(100)) == pdTRUE)
+      case PLC:
+        result = node.readHoldingRegisters(X0_ADD, 8); 
+        if (result == node.ku8MBSuccess)
         {
-          isChange("PLC", hreg[PLC_slaveID], &XY_hasChanged);
-          xSemaphoreGive(hasChangedMutex);
-        }
-      }
-      else
-      {
-        Serial.println(result); // Check this code for timeouts (226) or invalid data (227)
-      }
-      last_slave = PLC;
-      // curr_slave = SERVO;
-      break;
-      // case SERVO:
-      //   break;
-    }
+          hreg[PLC_slaveID][0] = node.getResponseBuffer(0);
+          hreg[PLC_slaveID][1] = node.getResponseBuffer(1);
+          hreg[PLC_slaveID][2] = node.getResponseBuffer(2);
+          hreg[PLC_slaveID][3] = node.getResponseBuffer(3);
 
-    //   xSemaphoreGive(hregMutex);
-    // }
+          hreg[PLC_slaveID][4] = node.getResponseBuffer(4);
+          hreg[PLC_slaveID][5] = node.getResponseBuffer(5);
+          hreg[PLC_slaveID][6] = node.getResponseBuffer(6);
+          hreg[PLC_slaveID][7] = node.getResponseBuffer(7);
+
+          doorRuntimeCounter_MANUAL(hreg[PLC_slaveID][0]);
+          elevatorRuntimeCounter(hreg[PLC_slaveID][4]);
+
+          if (xSemaphoreTake(hasChangedMutex, pdMS_TO_TICKS(50)) == pdTRUE)
+          {
+            isChange("PLC", hreg[PLC_slaveID], &XY_hasChanged);
+            xSemaphoreGive(hasChangedMutex);
+          }
+        }
+        else
+        {
+          Serial.printf("Modbus error: %02X\n", result);
+        }
+        last_slave = PLC;
+        break;
+      }
+      xSemaphoreGive(modbusMutex);
+    }
     vTaskDelay(pdMS_TO_TICKS(ChangeSlaveInterval));
   }
 }
@@ -1501,10 +1506,18 @@ void setup()
 
     if (targetBit != -1) {
       // Pulse logic: Set bit HIGH, wait 200ms, set bit LOW on address 20
-      node.writeSingleRegister(controlAddr, (1 << targetBit));
-      delay(200);
-      node.writeSingleRegister(controlAddr, 0);
-      success = true;
+      if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+        node.writeSingleRegister(controlAddr, (1 << targetBit));
+        xSemaphoreGive(modbusMutex);
+        
+        delay(200);
+        
+        if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+          node.writeSingleRegister(controlAddr, 0);
+          xSemaphoreGive(modbusMutex);
+          success = true;
+        }
+      }
     }
 
     if (success) {
@@ -1558,6 +1571,7 @@ void setup()
   mqttMutex = xSemaphoreCreateRecursiveMutex();
   firebaseMutex = xSemaphoreCreateMutex();
   hasChangedMutex = xSemaphoreCreateMutex();
+  modbusMutex = xSemaphoreCreateMutex();
   xTaskCreate(vPollingTask, "PollingTask", 4096, NULL, 4, &pollingTaskHandle);
   xTaskCreate(vReconnectTask, "ReconnectTask", 4096, NULL, 3, NULL);
   xTaskCreate(vPublishTask, "PublishTask", 4096, NULL, 3, &publishTaskHandle);
