@@ -1,52 +1,24 @@
 // Javascript code to set up a websocket.
-
-var m_url_JS = "ws://nanostat.local:81/";
+var m_url_JS = "ws://" + window.location.hostname + ":81/";
+// var m_url_JS = "ws://nanostat.local:81/";
 //var m_url_JS = "ws://192.168.1.44:81/";
 // var url = "ws://192.168.4.1:1337/";
 
 var m_websocket;
-var m_canvas_JS;
-var context;
-var dataPlot;
-var maxDataPoints = 20; // max points in browser cache
-var new_binary_data_is_incoming = false; // if true, reset counters, will recieve 3 binary messages with arrays for current voltage time
-var amps_array_has_been_received = false;
-var volts_array_has_been_received = false;
-var time_array_has_been_received = false;
-var amps_array = []; // these have to be global and filled one by one, assume browswer has infinite processing power and memory
-var volts_array = []; // these have to be global and filled one by one, assume browswer has infinite processing power and memory
-var time_array = []; // these have to be global and filled one by one, assume browswer has infinite processing power and memory
+var domElements = {};
+
 
 // This is called when the page finishes loading
 function init() {
+domElements.btnUp = document.getElementById("btnUp");
+    domElements.btnDown = document.getElementById("btnDown");
+    domElements.btnEmg = document.getElementById("btnEmg");
+    domElements.emgText = document.getElementById("emgText"); 
+    domElements.floorNumDisplay = document.querySelector("#FloorValue .floor-num");
+    domElements.floorMsg = document.querySelector("#FloorValue .floor-msg");
+    domElements.toastContainer = document.getElementById("toast-container");
 
-    // Assign page elements to variables
-    m_canvas_JS = document.getElementById("m_canvas");
-
-    // create chart:
-
-    // dataPlot = new Chart(document.getElementById("m_canvas"), {
-    //     type: 'line',
-    //     data: {
-    //         labels: [],
-    //         datasets: [{
-    //             data: [],
-    //             label: "Temperature (C)",
-    //             borderColor: "#3e95cd",
-    //             fill: false
-    //         }]
-    //     },
-    //     options: {
-    //         scales: {
-    //             y: {
-    //                 beginAtZero: true
-    //             }
-    //         }
-    //     }
-    // });
-
-    // Connect to WebSocket server
-    wsConnect(m_url_JS);
+    wsConnect();
 }
 
 // Call this to connect to the WebSocket server
@@ -106,68 +78,143 @@ function addData(label, data) {
     dataPlot.update();
 }
 
+
+
+
 // Called when a message is received from the server
+// function onMessage(evt) {
+//     const STATE_IDLE = 0;
+//     const STATE_RUNNING = 1;
+//     const STATE_PENDING = 2;
+//     const STATE_PAUSED = 3;
+//     const STATE_EMERGENCY = 4;
+
+//     console.log("onMessage called");
+
+//     if (typeof (evt.data) == "string") {
+//         console.log("STRING! parsing....");
+//         console.log("Received: " + evt.data);
+
+//         try {
+//             var m_json_obj = JSON.parse(evt.data);
+
+//             var btnUp = document.getElementById("btnUp");
+//             var btnDown = document.getElementById("btnDown");
+//             // var btnEmg = document.getElementById("btnEmergency");
+            
+
+//             if ('alert' in m_json_obj) {
+//                 showToast(m_json_obj.alert, m_json_obj.msg);
+//                 return; 
+//             }
+
+
+//             if ('floorValue' in m_json_obj) {
+//                 var floorNumDisplay = document.querySelector("#FloorValue .floor-num");
+//                 if (floorNumDisplay) {
+//                     floorNumDisplay.innerText = m_json_obj.floorValue;
+//                 }
+//             }
+
+//             if (m_json_obj.state == STATE_RUNNING || m_json_obj.state == STATE_PENDING) {
+//                 if (m_json_obj.up === true) {
+//                     btnUp?.classList.add("up-active");
+//                 } else {
+//                     btnUp?.classList.remove("up-active");
+//                 }
+
+//                 if (m_json_obj.down === true) {
+//                     btnDown?.classList.add("down-active");
+//                 } else {
+//                     btnDown?.classList.remove("down-active");
+//                 }
+
+//             } else {
+//                 // ถ้าลิฟต์จอด (IDLE) ให้ดับไฟปุ่มทั้งหมด
+//                 btnUp?.classList.remove("up-active");
+//                 btnDown?.classList.remove("down-active");
+//             }
+
+//             if ('emo' in m_json_obj) {
+//                 if (m_json_obj.emo === true) {
+//                     // ถ้า true ให้ใส่คลาสไฟกระพริบสีแดง
+//                     btnEmg?.classList.add("emerg-active");
+//                     emgText?.classList.add("show");
+//                 } else {
+//                     // ถ้า false ให้ลบคลาสทิ้งไป (ไฟดับ)
+//                     btnEmg?.classList.remove("emerg-active");
+//                     emgText?.classList.remove("show");
+//                 }
+//             }
+
+//             // if ('Mode' in m_json_obj) {
+//             //     if (m_json_obj.Mode === "EMERGENCY") {
+//             //         btnEmg?.classList.add("blink");
+//             //     } else {
+//             //         btnEmg?.classList.remove("blink");
+//             //     }
+//             // }
+
+//             if ('btwFloor' in m_json_obj) {
+//                 var floorMsg = document.querySelector("#FloorValue .floor-msg");
+
+//                 if (floorMsg) {
+//                     if (m_json_obj.btwFloor === true) {
+//                         floorMsg.classList.add("show");
+//                     } else {
+//                         floorMsg.classList.remove("show");
+//                     }
+//                 }
+//             }
+
+//         } catch (e) {
+//             console.error("Error parsing JSON: ", e);
+//         }
+//     }
+// }
+
 function onMessage(evt) {
-    console.log("onMessage called");
+    const STATE_IDLE = 0;
+    const STATE_RUNNING = 1;
+    const STATE_PENDING = 2;
+    const STATE_PAUSED = 3;
+    const STATE_EMERGENCY = 4;
 
-    if (typeof (evt.data) == "string") {
-        console.log("STRING! parsing....");
-        console.log("Received: " + evt.data);
-
+    if (typeof (evt.data) === "string") {
         try {
-            var m_json_obj = JSON.parse(evt.data);
+            var obj = JSON.parse(evt.data);
 
-            var btnUp = document.getElementById("btnUp");
-            var btnDown = document.getElementById("btnDown");
-            var btnEmg = document.getElementById("btnEmergency");
+            if ('alert' in obj) {
+                showToast(obj.alert, obj.msg);
+                return; 
+            }
 
-            if ('floorValue' in m_json_obj) {
-                var floorNumDisplay = document.querySelector("#FloorValue .floor-num");
-                if (floorNumDisplay) {
-                    floorNumDisplay.innerText = m_json_obj.floorValue;
+            // 3. เรียกใช้ผ่าน domElements เพื่อความเร็ว
+            if ('floorValue' in obj && domElements.floorNumDisplay) {
+                if (domElements.floorNumDisplay.innerText !== obj.floorValue.toString()) {
+                    domElements.floorNumDisplay.innerText = obj.floorValue;
                 }
             }
 
-            if (m_json_obj.Moving) {
-                if (m_json_obj.Up === true) {
-                    btnUp?.classList.add("active");
-                } else {
-                    btnUp?.classList.remove("active");
-                }
-
-                if (m_json_obj.Down === true) {
-                    btnDown?.classList.add("active");
-                } else {
-                    btnDown?.classList.remove("active");
-                }
+            if (obj.state === STATE_RUNNING || obj.state === STATE_PENDING) {
+                domElements.btnUp?.classList.toggle("up-active", obj.up === true);
+                domElements.btnDown?.classList.toggle("down-active", obj.down === true);
             } else {
-                btnUp?.classList.remove("active");
-                btnDown?.classList.remove("active");
+                domElements.btnUp?.classList.remove("up-active");
+                domElements.btnDown?.classList.remove("down-active");
             }
 
-            // จัดการโหมด Emergency
-            if ('Mode' in m_json_obj) {
-                if (m_json_obj.Mode === "EMERGENCY") {
-                    btnEmg?.classList.add("blink");
-                } else {
-                    btnEmg?.classList.remove("blink");
-                }
+            if ('emo' in obj) {
+                domElements.btnEmg?.classList.toggle("emerg-active", obj.emo === true);
+                domElements.emgText?.classList.toggle("show", obj.emo === true);
             }
 
-            if ('BtwFloor' in m_json_obj) {
-                var floorMsg = document.querySelector("#FloorValue .floor-msg");
-                
-                if (floorMsg) {
-                    if (m_json_obj.BtwFloor === true) {
-                        floorMsg.classList.add("show"); 
-                    } else {
-                        floorMsg.classList.remove("show"); 
-                    }
-                }
+            if ('btwFloor' in obj && domElements.floorMsg) {
+                domElements.floorMsg.classList.toggle("show", obj.btwFloor === true);
             }
 
         } catch (e) {
-            console.error("Error parsing JSON: ", e);
+            console.error("JSON Parse Error: ", e);
         }
     }
 }
@@ -203,3 +250,26 @@ function sendDataRate() {
 window.addEventListener("load", init, false);
 
 
+function showToast(type, message) {
+    var container = document.getElementById("toast-container");
+    if (!container) return;
+
+    // สร้างกล่อง div ใหม่
+    var toast = document.createElement("div");
+    
+    // ใส่คลาสตามประเภทที่ส่งมา (danger, warning, info) แปลงตัวพิมพ์เล็ก
+    toast.className = "toast-msg " + type.toLowerCase();
+    
+    // ใส่ข้อความ
+    toast.innerHTML = "<strong>" + type + "</strong>" + message;
+
+    // เอาไปแปะในหน้าจอ
+    container.appendChild(toast);
+
+    // ตั้งเวลาให้ลบตัวเองทิ้งหลังจากผ่านไป 5 วินาที
+    setTimeout(function() {
+        if(container.contains(toast)){
+            container.removeChild(toast);
+        }
+    }, 5000); 
+}

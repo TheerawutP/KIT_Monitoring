@@ -1,15 +1,50 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap');
+/* @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap'); */
+@import url('https://fonts.googleapis.com/css2?family=Forum&family=Italiana&family=Julius+Sans+One&family=Poiret+One&display=swap');
 
 body {
   background-color: hsl(216, 99%, 90%);
 }
-.mybox1 { border: 1px white solid; background-color: rgb(28, 226, 160); }
-.mybox2 { border: 1px white solid; background-color: rgb(169, 237, 247); }
-.mybox3 { border: 1px white solid; background-color: lightgray; }
-.mybox5 { border: 1px rgb(250, 250, 250) solid; background-color: rgb(193, 193, 80); }
-.mybox4 { border: 1px rgb(255, 255, 255) solid; background-color: rgb(39, 98, 157); }
-.mybox6 { border: 1px rgb(255, 255, 255) solid; background-color: rgb(162, 245, 170); min-height: 55px; }
-.mybox7 { border: 1px rgb(255, 253, 255) solid; background-color: rgb(28, 105, 205); min-height: 55px; }
+
+.mybox1 {
+  border: 1px white solid;
+  background-color: rgb(28, 226, 160);
+}
+
+.mybox2 {
+  border: 1px white solid;
+  background-color: rgb(169, 237, 247);
+}
+
+.mybox3 {
+  border: 1px white solid;
+  background-color: lightgray;
+}
+
+.mybox5 {
+  border: 1px rgb(250, 250, 250) solid;
+  background-color: rgb(193, 193, 80);
+}
+
+.mybox4 {
+  border: 1px rgb(255, 255, 255) solid;
+  background-color: rgb(39, 98, 157);
+}
+
+.mybox6 {
+  border: 1px rgb(255, 255, 255) solid;
+  background-color: rgb(162, 245, 170);
+  min-height: 55px;
+}
+
+.mybox7 {
+  border: 1px rgb(255, 253, 255) solid;
+  background-color: rgb(28, 105, 205);
+  min-height: 55px;
+}
+
+
+
+
 
 .myfooter {
   border: 1px white solid;
@@ -21,22 +56,6 @@ input[type=number] {
   border-radius: 0;
 }
 
-.screen-top {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  height: 100vh;
-  padding-top: 60px; 
-}
-
-.control-panel {
-  width: 250px; 
-  text-align: center;
-  background-color: rgba(255, 255, 255, 0.5); 
-  padding: 20px;
-  border-radius: 20px;
-  box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-}
 
 .status-row {
   display: flex;
@@ -46,133 +65,444 @@ input[type=number] {
 
 .arrow-row {
   display: flex;
-  justify-content: space-between; 
+  justify-content: space-between;
   margin-bottom: 15px;
   gap: 15px;
 }
 
 
 
-
-
 .seven-seg {
-  width: 200px; 
-  height: 200px;
-  border: 4px solid rgb(168, 219, 239);
-  background: #222;
-  color: rgb(50, 198, 231);
+  /* ไม่กำหนด width/height ตายตัวแล้ว ปล่อยให้อิสระ */
+  background: transparent;
+  /* เอาพื้นหลังสีดำออก */
+  border: none;
+  /* เอาเส้นขอบออก */
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  border-radius: 15px;
-  
-  flex-direction: column; 
+  margin: 0;
 }
 
 .seven-seg .floor-num {
-  font-size: 120px;    
-  line-height: 1;      
-  flex-grow: 1;       
-  display: flex;
-  align-items: center;
+  color: #ffffff;
+  font-size: 100px;
+  /* ขยายให้ใหญ่สะใจ เพราะไม่มีกรอบมาจำกัดแล้ว */
+  font-weight: 250;
+  /* ใช้ตัวบางจะดูแพง (ถ้ายากให้หนาเปลี่ยนเป็น 600) */
+  font-family: 'Inter', sans-serif;
+  line-height: 1;
+
+  /* สร้างเอฟเฟคแสงฟุ้งสีขาวรอบๆ ตัวเลข */
+  text-shadow: 0 0 30px rgba(255, 255, 255, 0.8),
+    0 0 10px rgba(255, 255, 255, 0.5);
 }
 
 .seven-seg .floor-msg {
-  font-family: 'Orbitron', monospace; 
-  font-size: 14px;      
-  font-weight: bold;
-  color: rgb(50, 198, 231);
-  margin-bottom: 20px;  
+  font-family: 'Inter', sans-serif;
+  font-size: 20px;
+  font-weight: 300;
+  color: #ffffff !important;
+  /* บังคับให้เป็นสีขาว 100% ตัดปัญหาสีฟ้า */
   text-transform: uppercase;
-  
-  display: none;        
+  letter-spacing: 3px;
+  margin-top: 15px;
+  text-shadow: 0 0 15px rgba(255, 255, 255, 0.8);
+
+  /* 🌟 จุดสำคัญ: จองพื้นที่ไว้เสมอแต่ทำให้มองไม่เห็น แทนการเอาออกไปจากหน้าจอ */
+  display: block;
+  /* ให้มันกินพื้นที่ไว้ */
+  height: 20px;
+  /* ล็อคความสูงของบรรทัดไว้เลย จะได้ไม่ขยับ */
+  opacity: 0;
+  /* โปร่งใส 100% (ซ่อนไว้) */
+  visibility: hidden;
+  /* 🌟 ใช้ visibility ซ่อนไว้ (จองที่ไว้แล้วแต่ล่องหน) */
 }
 
 .seven-seg .floor-msg.show {
-  display: block;
-  animation: blink 1s infinite; 
+  visibility: visible;
+  /* 🌟 ยกเลิกล่องหน */
+  animation: textBlink 1s infinite;
+  /* สั่งกระพริบ ทุกๆ 1 วินาที */
 }
 
-@keyframes blink { 50% { opacity: 0; } }
+@keyframes textBlink {
+
+  0%,
+  100% {
+    opacity: 1;
+    text-shadow: 0 0 15px rgba(255, 255, 255, 0.9);
+  }
+
+  50% {
+    opacity: 0.1;
+    /* ดับไฟลงเกือบมืดสนิท */
+    text-shadow: none;
+  }
+}
+
+
 
 
 
 
 .arrow-btn {
+  background: #222;
+  border: 2px solid #444;
+  border-radius: 50%;
+  width: 80px;
+  height: 80px;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+body {
+  background: linear-gradient(180deg, #2C73B5 0%, #58B9FF 100%);
+  margin: 0;
+  padding: 0;
+  /* บังคับไม่ให้มี Scrollbar */
+  /* overflow: hidden; */
+  overflow-y: auto;
+  /* ลบ overflow: hidden; ทิ้งไปเลย */
+  min-height: 100vh;
+}
+
+/* .main-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  justify-content: flex-start;
+
+
+  min-height: 100vh;
+  width: 100%;
+} */
+
+.main-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+
+  /* 🌟 ใช้ dvh แทน vh เพื่อให้คำนวณความสูงหักลบแถบเบราว์เซอร์มือถือออกไป */
+  height: 100dvh;
+  width: 100%;
+  padding-bottom: 20px;
+  /* เว้นระยะด้านล่างนิดนึงไม่ให้ปุ่มชิดขอบเกินไป */
+}
+
+/* Container แนวตั้ง */
+.control-panel-vertical {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* ทำให้ปุ่มแต่ละใบเรียงตรงกันเป๊ะ */
+  gap: 0.6vh;
+  margin-top: 0px;
+  /* ปรับตัวเลข 40px ให้มากหรือน้อยได้ตามใจชอบเลยครับ */
+}
+
+/* สไตล์ปุ่มวงกลมพื้นฐาน */
+.lift-btn {
   width: 90px;
+  /* เพิ่มขนาดปุ่ม */
   height: 90px;
-  font-size: 48px;
-  font-weight: bold;
-  
-  background: rgb(41, 184, 241); 
-  color: white;
-  
-  border: 1px solid rgb(247, 247, 247);
-  border-radius: 15px;
+  /* เพิ่มขนาดปุ่ม */
+  background: transparent;
+  border: 3px solid rgba(255, 255, 255, 0.9);
+  /* เส้นขอบขาวสว่าง */
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  transition: all 0.1s; 
-
-  box-shadow: 0 5px 0 #1a7bbd, 0 5px 10px rgba(0,0,0,0.2); /* 3d eff */
+  transition: all 0.3s ease;
+  padding: 0;
+  margin: 10px 0;
+  /* เพิ่มระยะห่างบน-ล่างระหว่างปุ่ม */
+  outline: none;
 }
 
-/* Effect (Active State & Mouse Down) */
-.arrow-btn:active, .arrow-btn.active {
-  background: #00e676; 
-  box-shadow: 
-    0 0 0 #1a7bbd, 
-    inset 0 0 10px rgba(0,0,0,0.2), 
-    0 0 20px #00e676; /* เรืองแสง */
-  transform: translateY(5px); 
-  border-color: #00ff66;
+/* ปรับขนาด Icon ข้างใน */
+/* เจาะจงไปที่ tag svg ภายในปุ่ม */
+.lift-btn svg {
+  width: 50px !important;
+  /* ขยายขนาดสัญลักษณ์ (จากเดิม 65) */
+  height: 50px !important;
+  /* ขยายขนาดสัญลักษณ์ (จากเดิม 65) */
+
+  /* บังคับสีขาวให้ครอบคลุมทุกส่วน */
+  color: white !important;
+  stroke: white !important;
+  fill: none;
+
+  /* ปรับความหนาของเส้น (เพิ่มจาก 1.5 เป็น 3 หรือ 4 ตามใจชอบ) */
+  stroke-width: 3px !important;
+
+  /* ป้องกันขอบหยัก */
+  stroke-linecap: round;
+  stroke-linejoin: round;
+
+  transition: all 0.3s ease;
 }
 
-.stop-btn {
-  width: 100%;
-  height: 60px;
-  margin-bottom: 15px;
+/* ตัวอักษร stop */
+.lift-btn span {
   font-size: 24px;
-  font-weight: bold;
-  background: rgb(41, 184, 241);
-  color: white;
-  border: 1px solid rgb(247, 247, 247);
-  border-radius: 10px;
-  cursor: pointer;
-  transition: all 0.1s;
-  box-shadow: 0 5px 0 #1a7bbd, 0 5px 10px rgba(0,0,0,0.2);
+  font-family: sans-serif;
 }
 
-.stop-btn:active {
-  background: #ffaa00; 
-  box-shadow: 0 0 0 #1a7bbd, inset 0 0 10px rgba(0,0,0,0.2);
-  transform: translateY(5px);
+/* --- State: เมื่อลิฟต์ทำงาน (Glow Effect) --- */
+
+.up-active,
+.down-active {
+  background: rgba(255, 255, 255, 0.15);
+  /* พื้นหลังจางๆ เวลาติดไฟ */
+  box-shadow: 0 0 35px rgba(255, 255, 255, 0.8);
+  /* รัศมีแสงสีขาว */
+  border-color: #ffffff;
+  transform: scale(1.1);
+  /* ขยายใหญ่ขึ้นอีกนิดตอนทำงาน */
 }
 
-.emergency-btn {
+.stop-text {
+  color: white !important;
+  font-size: 20px !important;
+  /* ขยายขนาดตัวอักษร */
+  font-weight: 800 !important;
+  /* เพิ่มความหนาเป็น Extra Bold */
+  text-transform: uppercase;
+  /* ทำให้เป็นตัวพิมพ์ใหญ่ทั้งหมดจะดูเต็มปุ่มกว่า */
+  letter-spacing: 1px;
+}
+
+#btnStop:active {
+  transform: scale(0.95);
+  /* ทำให้ปุ่มยุบลงนิดนึงเหมือนถูกกดจริง */
+  background: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.8);
+}
+
+/* 2. คลาสพิเศษสำหรับให้เรืองแสงค้างไว้แป๊บนึงแม้จะปล่อยนิ้วแล้ว */
+.stop-active {
+  background: rgba(255, 255, 255, 0.3) !important;
+  /* พื้นหลังสว่างขึ้น */
+  box-shadow: 0 0 40px rgba(255, 255, 255, 1) !important;
+  /* แสงฟุ้งกระจาย */
+  border-color: #ffffff !important;
+  transform: scale(1.05);
+  /* เด้งขยายขึ้นมานิดนึง */
+  transition: all 0.6s ease-out;
+  /* แอนิเมชันตอนไฟติดให้ไวขึ้น */
+}
+
+
+
+
+.logo-container {
   width: 100%;
-  height: 60px;
-  font-size: 22px;
-  font-weight: bold;
-  background: rgb(41, 184, 241); 
-  color: white;
-  border: 1px solid rgb(247, 247, 247);
-  border-radius: 10px;
-  cursor: pointer;
-  transition: all 0.1s;
-  box-shadow: 0 5px 0  #1a7bbd, 0 5px 10px rgba(0,0,0,0.2);
+  display: flex;
+  justify-content: center;
+  padding: 0 20px;
 }
 
-.emergency-btn:active {
-  background: red;
-  box-shadow: 0 0 0 #cc0000, inset 0 0 10px rgba(0,0,0,0.2);
-  transform: translateY(5px);
+/* ปรับขนาดรูปโลโก้ */
+.main-logo {
+  max-width: 220px;
+  /* ปรับขนาดความกว้างตามใจชอบ */
+  height: auto;
+  filter: brightness(0) invert(1);
+  /* 🌟 ทริค: เปลี่ยนโลโก้สีดำ/เทา ให้กลายเป็นสีขาวสว่าง */
+  opacity: 0.9;
 }
 
-.emergency-btn.active, .emergency-btn.blink {
-  animation: emergencyBlink 0.8s infinite;
+.brand-subname {
+  font-family: 'Forum', serif;
+
+  font-size: 2rem;
+  font-weight: 200;
+  /* 🌟 ใช้เลข 300 เส้นจะบางเฉียบ ดูหรูมาก */
+  color: #ffffff;
+  margin-top: -5px;
+
+  letter-spacing: 10px;
+  text-transform: uppercase;
+
+  text-shadow: 0 0 15px rgba(255, 255, 255, 0.4);
 }
 
-@keyframes emergencyBlink {
-  0% { box-shadow: 0 0 5px red; background-color: #ff4444; }
-  50% { box-shadow: 0 0 40px red; background-color: #ff0000; }
-  100% { box-shadow: 0 0 5px red; background-color: #ff4444; }
+
+
+.emerg-active {
+  /* ทำให้พื้นหลังปุ่มเป็นสีเหลืองอำพันจางๆ */
+  background: rgba(255, 191, 0, 0.3) !important;
+  /* เปลี่ยนสีกรอบ */
+  border-color: #FFBF00 !important;
+  /* เรียกใช้แอนิเมชันกระพริบ */
+  animation: emergBlink 1s infinite ease-in-out;
+}
+
+/* เปลี่ยนสีไอคอนข้างในด้วย */
+.emerg-active svg {
+  color: #FFBF00 !important;
+  stroke: #FFBF00 !important;
+}
+
+/* แอนิเมชันกระพริบแสง */
+@keyframes emergBlink {
+
+  0%,
+  100% {
+    box-shadow: 0 0 15px rgba(255, 191, 0, 0.5);
+    transform: scale(1);
+  }
+
+  50% {
+    box-shadow: 0 0 40px rgba(255, 191, 0, 1);
+    /* แสงฟุ้งกระจายแรงสุด */
+    transform: scale(1.05);
+    /* เด้งขยายใหญ่ขึ้นนิดนึง */
+  }
+}
+
+.emg-msg-container {
+  /* จองพื้นที่ความสูงไว้เลย ปุ่มจะได้ไม่ขยับตอนข้อความโผล่ */
+  height: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.emg-text {
+  font-family: 'Inter', sans-serif;
+  font-size: 18px;
+  font-weight: 800;
+  color: #FFBF00;
+  text-transform: uppercase;
+  text-align: center;
+  line-height: 1.2;
+  letter-spacing: 1px;
+
+  /* ซ่อนไว้เป็นค่าเริ่มต้น */
+  visibility: hidden;
+  opacity: 0;
+}
+
+/* ตัวหนังสือบรรทัดเล็กลงมา */
+.emg-text .emg-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: #FFE699;
+  /* เปลี่ยนเป็นสีเหลืองพาสเทลอ่อนๆ ให้เข้าโทน */
+  letter-spacing: 0.5px;
+}
+
+/* เมื่อได้รับคำสั่งให้แสดง */
+.emg-text.show {
+  visibility: visible;
+  animation: textAmberGlow 1s infinite;
+}
+
+/* อนิเมชันตัวหนังสือเรืองแสง */
+@keyframes textAmberGlow {
+
+  0%,
+  100% {
+    opacity: 0.6;
+    text-shadow: 0 0 5px rgba(255, 191, 0, 0.5);
+  }
+
+  50% {
+    opacity: 1;
+    /* แสงฟุ้ง + แกนกลางสีขาวนิดๆ ให้ดูสว่างจ้า */
+    text-shadow: 0 0 15px rgba(255, 191, 0, 1), 0 0 5px rgba(255, 255, 255, 0.8);
+  }
+}
+
+
+
+
+
+#toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* หน้าตาของ Pop-up */
+.toast-msg {
+  background: rgba(30, 30, 45, 0.95);
+  backdrop-filter: blur(10px);
+  color: #fff;
+  padding: 15px 25px;
+  border-radius: 8px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+  font-family: 'Inter', sans-serif;
+  min-width: 250px;
+  transform: translateX(120%);
+  /* ซ่อนไว้ทางขวาก่อน */
+  animation: slideInRight 0.3s forwards, fadeOutRight 0.5s 4.5s forwards;
+  border-left: 5px solid #00c0ff;
+  /* สีขอบเริ่มต้น */
+}
+
+/* หัวข้อ (DANGER, WARNING, INFO) */
+.toast-msg strong {
+  display: block;
+  font-size: 12px;
+  letter-spacing: 1px;
+  margin-bottom: 5px;
+}
+
+/* แบ่งสีตามประเภท */
+.toast-msg.danger {
+  border-left-color: #ff3333;
+  color: #ffcccc;
+}
+
+.toast-msg.danger strong {
+  color: #ff3333;
+}
+
+.toast-msg.warning {
+  border-left-color: #FFBF00;
+  color: #fff0cc;
+}
+
+.toast-msg.warning strong {
+  color: #FFBF00;
+}
+
+.toast-msg.info {
+  border-left-color: #00e676;
+  color: #ccffcc;
+}
+
+.toast-msg.info strong {
+  color: #00e676;
+}
+
+/* แอนิเมชันเข้าและออก */
+@keyframes slideInRight {
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes fadeOutRight {
+  to {
+    opacity: 0;
+    transform: translateX(120%);
+  }
 }

@@ -36,8 +36,10 @@ uint16_t hreg[8][16];
 
 // credential
 const char *ELEVATOR_ID = "E1"; // Hardcoded for now
-const char *ssid = "Flinkone 1-2.4G";
-const char *password = "ff112335";
+// const char *ssid = "Flinkone 1-2.4G";
+// const char *password = "ff112335";
+const char *ssid = "";
+const char *password = "";
 // const char *mqtt_broker = "kit.flinkone.com";
 // const int mqtt_port = 1883; // unencrypt
 const char *mqtt_broker = "158.101.156.71";
@@ -825,18 +827,26 @@ void setUpAPService()
 {
   Serial.println(F("Starting Access Point server."));
 
-  // DNSServer dnsServer;
-  // dnsServer.reset(new DNSServer());
+  dnsServer.reset(new DNSServer());
   WiFi.mode(WIFI_AP);
-  // WiFi.softAPConfig(IPAddress(172, 217, 28, 1), IPAddress(172, 217, 28, 1), IPAddress(255, 255, 255, 0));
+  IPAddress apIP(192, 168, 4, 1);
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
   WiFi.softAP("Ximplex_KIT");
   delay(500);
+
+  (*dnsServer).setErrorReplyCode(DNSReplyCode::NoError);
+  (*dnsServer).start(DNS_PORT, "*", apIP);
+
+  Serial.println("dns server config done");
 }
 
 void process()
 {
   /// DNS
-  // dnsServer->processNextRequest();
+  if (dnsServer)
+  {
+    dnsServer->processNextRequest();
+  }
   // yield
   yield();
   delay(10);
@@ -1163,6 +1173,9 @@ void runWifiPortal()
   m_wifitools_server->on("/wifiScan.json", HTTP_GET, [](AsyncWebServerRequest *request)
                          { getWifiScanJson(request); });
 
+  m_wifitools_server->onNotFound([](AsyncWebServerRequest *request)
+                                 { request->redirect("/"); });
+
   Serial.println(F("HTTP server started"));
   m_wifitools_server->begin();
   if (!MDNS.begin("keepintouch")) // see https://randomnerdtutorials.com/esp32-access-point-ap-web-server/
@@ -1432,11 +1445,14 @@ void setup()
   server.reset(); // try putting this in setup
   configureserver();
 
-  // Generate unique device path based on MAC address
+  // Generate unique ID based on MAC address
   String mac = WiFi.macAddress();
   mac.replace(":", "");
-  String dynamicDevicePath = "/devices/ESP32_";
-  dynamicDevicePath += mac;
+  String dynamicId = "ESP32_";
+  dynamicId += mac;
+  
+  String dynamicDevicePath = "/devices/";
+  dynamicDevicePath += dynamicId;
   Serial.print("Dynamic Firebase Device Path: ");
   Serial.println(dynamicDevicePath);
 
@@ -1535,10 +1551,15 @@ void setup()
   Serial.println(WiFi.localIP());
   setupMQTT();
 
-  // Initialize secure topics based on ELEVATOR_ID
+  // Initialize secure topics based on the dynamic ID (MAC-based)
+  // This MUST match the ID used in the Bridge and UI
+  // snprintf(cmd_sTopic, sizeof(cmd_sTopic), "elevator/%s/cmd", dynamicId.c_str());
+  // snprintf(ack_pTopic, sizeof(ack_pTopic), "elevator/%s/ack", dynamicId.c_str());
+  // snprintf(all_status_pTopic, sizeof(all_status_pTopic), "elevator/%s/state", dynamicId.c_str());
   snprintf(cmd_sTopic, sizeof(cmd_sTopic), "elevator/%s/cmd", ELEVATOR_ID);
   snprintf(ack_pTopic, sizeof(ack_pTopic), "elevator/%s/ack", ELEVATOR_ID);
   snprintf(all_status_pTopic, sizeof(all_status_pTopic), "elevator/%s/state", ELEVATOR_ID);
+
 
   // Legacy topics (Optional fallback, but prioritizing new ones)
   strncpy(X_pTopic, DEFAULT_X_PTOPIC, sizeof(X_pTopic) - 1);

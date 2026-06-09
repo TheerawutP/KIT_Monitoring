@@ -64,105 +64,19 @@ async function on_Button_EMERGENCY_pressed() {
   }
 }
 
+function reset_mcu() {
+    if (!confirm("ARE YOU SURE YOU WANT TO RESET THE MCU?")) return;
 
+    const data = JSON.stringify({
+        reset_mcu: true
+    });
 
-// async function on_Button_5_pressed() {
-//   try {
-//     const response = await fetch("/button5pressed", {
-//       method: "PUT",
-//       body: JSON.stringify({ on: temporary_boolean }),
-//       headers: {
-//         "Content-Type": "application/json",
-//       },
-//     });
-//   } catch (error) {
-//     alert("Request failed - check the console");
-//     console.error(error);
-//   }
-// }
-// async function on_Button_6_pressed() {
-//   try {
-//     const response = await fetch("/button6pressed", {
-//       method: "PUT",
-//       body: JSON.stringify({ on: temporary_boolean }),
-//       headers: {
-//         "Content-Type": "application/json",
-//       },
-//     });
-//   } catch (error) {
-//     alert("Request failed - check the console");
-//     console.error(error);
-//   }
-// }
-// async function on_Button_7_pressed() {
-//   try {
-//     const response = await fetch("/button7pressed", {
-//       method: "PUT",
-//       body: JSON.stringify({ on: temporary_boolean }),
-//       headers: {
-//         "Content-Type": "application/json",
-//       },
-//     });
-//   } catch (error) {
-//     alert("Request failed - check the console");
-//     console.error(error);
-//   }
-// }
-// async function on_Button_8_pressed() {
-//   try {
-//     const response = await fetch("/button8pressed", {
-//       method: "PUT",
-//       body: JSON.stringify({ on: temporary_boolean }),
-//       headers: {
-//         "Content-Type": "application/json",
-//       },
-//     });
-//   } catch (error) {
-//     alert("Request failed - check the console");
-//     console.error(error);
-//   }
-// }
-// async function on_Button_9_pressed() {
-//   try {
-//     const response = await fetch("/button9pressed", {
-//       method: "PUT",
-//       body: JSON.stringify({ on: temporary_boolean }),
-//       headers: {
-//         "Content-Type": "application/json",
-//       },
-//     });
-//   } catch (error) {
-//     alert("Request failed - check the console");
-//     console.error(error);
-//   }
-// }
-// async function on_Button_10_pressed() {
-//   try {
-//     const response = await fetch("/button10pressed", {
-//       method: "PUT",
-//       body: JSON.stringify({ on: temporary_boolean }),
-//       headers: {
-//         "Content-Type": "application/json",
-//       },
-//     });
-//   } catch (error) {
-//     alert("Request failed - check the console");
-//     console.error(error);
-//   }
-// }
-
-// async function on_Button_11_pressed() {
-//   try {
-//     const response = await fetch("/button11pressed", {
-//       method: "PUT",
-//       body: JSON.stringify({ on: temporary_boolean }),
-//       headers: {
-//         "Content-Type": "application/json",
-//       },
-//     });
-//   } catch (error) {
-//     alert("Request failed - check the console");
-//     console.error(error);
-//   }
-// }
+    if (m_websocket && m_websocket.readyState === WebSocket.OPEN) {
+        m_websocket.send(data);
+        console.log("Sent: " + data);
+        alert("Sending reset command...");
+    } else {
+        alert("Error: Cannot connect to lift (WS Disconnected)");
+    }
+}
 
