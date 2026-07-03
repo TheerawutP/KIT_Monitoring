@@ -25,6 +25,8 @@
 #include "app/DefaultTopics.h"
 #include "app/HardwareConfig.h"
 
+#include <HTTPClient.h>
+
 // const char *firmwareURL = "https://raw.githubusercontent.com/TheerawutP/test_OTA/main/MCU.ino.bin";
 // bool shouldUpdateFirmware = false;
 TaskHandle_t pollingTaskHandle = NULL;
@@ -34,8 +36,11 @@ ModbusMaster node;
 
 uint16_t hreg[8][16];
 
+String jwtToken = "";
+const char *BRIDGE_TOKEN_URL = "http://158.101.156.71:3000/api/devices/token";
+
 // credential
-const char *ELEVATOR_ID = "E1"; // Hardcoded for now
+const char *ELEVATOR_ID = "E26028"; // Hardcoded for now
 // const char *ssid = "Flinkone 1-2.4G";
 // const char *password = "ff112335";
 const char *ssid = "";
@@ -62,7 +67,7 @@ const char *listenToAll_sTopic = DEFAULT_LISTEN_ALL_STOPIC;
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
-SemaphoreHandle_t mqttMutex; // Mutex to protect MQTT client
+SemaphoreHandle_t mqttMutex;     // Mutex to protect MQTT client
 SemaphoreHandle_t firebaseMutex; // Mutex to protect Firebase access
 SemaphoreHandle_t hasChangedMutex;
 SemaphoreHandle_t modbusMutex; // Mutex to protect Modbus communication
@@ -178,7 +183,8 @@ void sendAck(const char *msgId, bool ok, const char *error = NULL)
   doc["msgId"] = msgId;
   doc["ts"] = millis();
   doc["ok"] = ok;
-  if (error) doc["error"] = error;
+  if (error)
+    doc["error"] = error;
 
   char buffer[256];
   serializeJson(doc, buffer);
@@ -188,7 +194,8 @@ void sendAck(const char *msgId, bool ok, const char *error = NULL)
 void callback(char *topic, byte *payload, unsigned int length)
 {
   Serial.printf("Message arrived [%s] Content: ", topic);
-  for (int i = 0; i < length; i++) Serial.print((char)payload[i]);
+  for (int i = 0; i < length; i++)
+    Serial.print((char)payload[i]);
   Serial.println();
 
   // Handle Secure Bridge Commands
@@ -217,10 +224,14 @@ void callback(char *topic, byte *payload, unsigned int length)
     {
       int floor = doc["payload"]["floor"] | -1;
       Serial.printf("Action: Moving to floor %d\n", floor);
-      if (floor == 1) targetBit = 0;
-      else if (floor == 2) targetBit = 1;
-      else if (floor == 3) targetBit = 2;
-      else if (floor == 4) targetBit = 3;
+      if (floor == 1)
+        targetBit = 0;
+      else if (floor == 2)
+        targetBit = 1;
+      else if (floor == 3)
+        targetBit = 2;
+      else if (floor == 4)
+        targetBit = 3;
     }
     else if (strcmp(type, "openDoor") == 0)
     {
@@ -249,16 +260,18 @@ void callback(char *topic, byte *payload, unsigned int length)
     if (targetBit != -1)
     {
       // Pulse logic: Set bit HIGH, wait 200ms, set bit LOW on address 20
-      if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+      if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(500)) == pdTRUE)
+      {
         node.writeSingleRegister(controlAddr, (1 << targetBit));
         Serial.printf("Set bit %d HIGH at control address %d\n", targetBit, controlAddr);
         xSemaphoreGive(modbusMutex);
-        
-        vTaskDelay(pdMS_TO_TICKS(1000));      
-        
-        if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+
+        vTaskDelay(pdMS_TO_TICKS(1500));
+
+        if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(500)) == pdTRUE)
+        {
           node.writeSingleRegister(controlAddr, 0);
-          Serial.printf("Set control address %d LOW\n", controlAddr); 
+          Serial.printf("Set control address %d LOW\n", controlAddr);
           xSemaphoreGive(modbusMutex);
           success = true;
         }
@@ -295,7 +308,7 @@ void isChange(const char *from, uint16_t *data, bool *flag)
     // data[1]: X20-X27, X30-X37
     // data[2]: X40-X47, X50-X57
     // data[3]: X60-X67, X70-X77
-    
+
     // We format these as a single hex string for efficient transmission
     snprintf(X_temp, sizeof(X_temp), "%04X%04X%04X%04X",
              data[0], data[1], data[2], data[3]);
@@ -416,46 +429,47 @@ void elevatorRuntimeCounter(uint16_t y_stat)
 //   }
 // }
 
-
 void doorRuntimeCounter_MANUAL(uint16_t x_stat)
 {
-  bool isClosedLim = (x_stat >> 7) & 0x01; 
+  bool isClosedLim = (x_stat >> 7) & 0x01;
 
   if (currentState == DOOR_NULL)
   {
-    if (isClosedLim) currentState = DOOR_CLOSED;
-    else currentState = DOOR_OPEN; 
+    if (isClosedLim)
+      currentState = DOOR_CLOSED;
+    else
+      currentState = DOOR_OPEN;
     return;
   }
 
   switch (currentState)
   {
-    case DOOR_CLOSED:
-      if (!isClosedLim)
+  case DOOR_CLOSED:
+    if (!isClosedLim)
+    {
+      currentState = DOOR_OPEN;
+      openingStartTime = millis();
+    }
+    break;
+
+  case DOOR_OPEN:
+    if (isClosedLim)
+    {
+      uint32_t cycleDuration = millis() - openingStartTime;
+
+      openTime++;
+      closeTime++;
+      currentState = DOOR_CLOSED;
+      door_hasChanged = true;
+      if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
       {
-        currentState = DOOR_OPEN; 
-        openingStartTime = millis(); 
+        setPublishPending();
+        xSemaphoreGive(hasChangedMutex);
       }
-      break;
 
-    case DOOR_OPEN:
-      if (isClosedLim)
-      {
-        uint32_t cycleDuration = millis() - openingStartTime;
-
-        openTime++;
-        closeTime++;
-        currentState = DOOR_CLOSED;
-        door_hasChanged = true;
-        if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
-        {
-          setPublishPending();
-          xSemaphoreGive(hasChangedMutex);
-        }
-
-        Serial.printf("Door Cycle Complete. Duration: %u ms. Total Cycles: %u\n", cycleDuration, closeTime);
-      }
-      break;
+      Serial.printf("Door Cycle Complete. Duration: %u ms. Total Cycles: %u\n", cycleDuration, closeTime);
+    }
+    break;
   }
 }
 
@@ -502,10 +516,14 @@ bool buildCombinedPayload(char *buffer, size_t bufferSize)
   uint16_t y0 = hreg[PLC_slaveID][4];
   uint16_t y1 = hreg[PLC_slaveID][5];
 
-  if (y0 & (1 << 7)) currentFloor = 1;      // Y7
-  else if (y0 & (1 << 8)) currentFloor = 2; // Y10
-  else if (y0 & (1 << 9)) currentFloor = 3; // Y11
-  else if (y1 & (1 << 4)) currentFloor = 4; // Y24
+  if (y0 & (1 << 7))
+    currentFloor = 1; // Y7
+  else if (y0 & (1 << 8))
+    currentFloor = 2; // Y10
+  else if (y0 & (1 << 9))
+    currentFloor = 3; // Y11
+  else if (y1 & (1 << 4))
+    currentFloor = 4; // Y24
 
   StaticJsonDocument<256> doc;
   doc["x"] = X_status_payload;
@@ -519,6 +537,48 @@ bool buildCombinedPayload(char *buffer, size_t bufferSize)
 
   size_t len = serializeJson(doc, buffer, bufferSize);
   return len > 0;
+}
+
+bool fetchJWTToken()
+{
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    return false;
+  }
+
+  HTTPClient http;
+  http.begin(BRIDGE_TOKEN_URL);
+  http.addHeader("Content-Type", "application/json");
+
+  StaticJsonDocument<128> doc;
+  doc["deviceId"] = ELEVATOR_ID;
+
+  char payload[128];
+  serializeJson(doc, payload);
+
+  Serial.println("[Auth] Requesting JWT Token from Bridge...");
+  int httpResponseCode = http.POST(payload);
+
+  bool success = false;
+  if (httpResponseCode == 200)
+  {
+    String response = http.getString();
+    StaticJsonDocument<256> respDoc;
+
+    if (deserializeJson(respDoc, response) == DeserializationError::Ok)
+    {
+      jwtToken = respDoc["token"].as<String>();
+      Serial.println("[Auth] JWT Token fetched successfully!");
+      success = true;
+    }
+  }
+  else
+  {
+    Serial.printf("[Auth] Failed to get JWT. HTTP Code: %d\n", httpResponseCode);
+  }
+
+  http.end();
+  return success;
 }
 
 void setPublishPending()
@@ -540,19 +600,38 @@ void vReconnectTask(void *pvParams)
         {
           Serial.print("MQTT connecting...");
 
-          String clientId = "ESP32-";
-          clientId += String(random(0xffff), HEX); // Unique ID
-
-          if (mqttClient.connect(clientId.c_str()))
+          if (jwtToken == "")
           {
-            Serial.println("connected");
+            if (!fetchJWTToken())
+            {
+              Serial.println(" -> Wait for JWT token. Retrying...");
+              xSemaphoreGiveRecursive(mqttMutex);
+              vTaskDelay(pdMS_TO_TICKS(5000)); 
+              continue;
+            }
+          }
+
+          String clientId = "ESP32_";
+          clientId += ELEVATOR_ID;
+
+          if (mqttClient.connect(clientId.c_str(), ELEVATOR_ID, jwtToken.c_str()))
+          {
+            Serial.println("connected securely via JWT!");
             mqttClient.subscribe(listenToAll_sTopic);
-            mqttClient.subscribe(cmd_sTopic); // Subscribe to secure bridge commands
+            mqttClient.subscribe(cmd_sTopic);
           }
           else
           {
             Serial.print("failed, rc=");
             Serial.print(mqttClient.state());
+
+            //rc 4: Connection refused - bad user name or password
+            //rc 5: Connection refused - not authorized
+            if (mqttClient.state() == 4 || mqttClient.state() == 5)
+            {
+              Serial.println(" -> Token rejected/expired. Clearing JWT...");
+              jwtToken = "";
+            }
           }
         }
 
@@ -574,13 +653,13 @@ void vPollingTask(void *pvParams)
   {
     uint32_t result;
     digitalWrite(WIFI_READY, HIGH);
-    
+
     if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(200)) == pdTRUE)
     {
       switch (curr_slave)
       {
       case PLC:
-        result = node.readHoldingRegisters(X0_ADD, 8); 
+        result = node.readHoldingRegisters(X0_ADD, 8);
         if (result == node.ku8MBSuccess)
         {
           hreg[PLC_slaveID][0] = node.getResponseBuffer(0);
@@ -1126,7 +1205,7 @@ void getWifiScanJson(AsyncWebServerRequest *request)
       json += "\"RSSI\":";
       json += String(WiFi.RSSI(i));
       json += ",\"SSID\":\"";
-      json +=  WiFi.SSID(i);
+      json += WiFi.SSID(i);
       json += "\"";
       json += "}";
     }
@@ -1450,7 +1529,7 @@ void setup()
   mac.replace(":", "");
   String dynamicId = "ESP32_";
   dynamicId += mac;
-  
+
   String dynamicDevicePath = "/devices/";
   dynamicDevicePath += dynamicId;
   Serial.print("Dynamic Firebase Device Path: ");
@@ -1559,7 +1638,6 @@ void setup()
   snprintf(cmd_sTopic, sizeof(cmd_sTopic), "elevator/%s/cmd", ELEVATOR_ID);
   snprintf(ack_pTopic, sizeof(ack_pTopic), "elevator/%s/ack", ELEVATOR_ID);
   snprintf(all_status_pTopic, sizeof(all_status_pTopic), "elevator/%s/state", ELEVATOR_ID);
-
 
   // Legacy topics (Optional fallback, but prioritizing new ones)
   strncpy(X_pTopic, DEFAULT_X_PTOPIC, sizeof(X_pTopic) - 1);
