@@ -48,7 +48,7 @@ const char *password = "";
 // const char *mqtt_broker = "kit.flinkone.com";
 // const int mqtt_port = 1883; // unencrypt
 const char *mqtt_broker = "158.101.156.71";
-const int mqtt_port = 1883; // unencrypt
+const int mqtt_port = 8883; // encrypted
 
 // topics
 // publish topics
@@ -64,7 +64,7 @@ char ack_pTopic[128] = "";
 // subs topics
 const char *listenToAll_sTopic = DEFAULT_LISTEN_ALL_STOPIC;
 
-WiFiClient wifiClient;
+WiFiClientSecure wifiClient;
 PubSubClient mqttClient(wifiClient);
 
 SemaphoreHandle_t mqttMutex;     // Mutex to protect MQTT client
@@ -1626,7 +1626,7 @@ void setup()
   Serial1.begin(38400, SERIAL_8E1, PIN_RX, PIN_TX);
   node.begin(PLC_slaveID, Serial1);
 
-  // wifiClient.setInsecure();
+  wifiClient.setInsecure();
   Serial.println(WiFi.localIP());
   setupMQTT();
 
