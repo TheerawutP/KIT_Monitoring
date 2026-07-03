@@ -37,7 +37,7 @@ ModbusMaster node;
 uint16_t hreg[8][16];
 
 String jwtToken = "";
-const char *BRIDGE_TOKEN_URL = "http://158.101.156.71:3000/api/devices/token";
+const char *BRIDGE_TOKEN_URL = "http://158.101.156.71:3001/api/devices/token";
 
 // credential
 const char *ELEVATOR_ID = "E26028"; // Hardcoded for now
@@ -48,7 +48,7 @@ const char *password = "";
 // const char *mqtt_broker = "kit.flinkone.com";
 // const int mqtt_port = 1883; // unencrypt
 const char *mqtt_broker = "158.101.156.71";
-const int mqtt_port = 8883; // encrypted
+const int mqtt_port = 8884; // encrypted
 
 // topics
 // publish topics
