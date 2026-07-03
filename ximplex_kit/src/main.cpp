@@ -37,10 +37,13 @@ ModbusMaster node;
 uint16_t hreg[8][16];
 
 String jwtToken = "";
-const char *BRIDGE_TOKEN_URL = "http://158.101.156.71:3001/api/devices/token";
+//const char *BRIDGE_TOKEN_URL = "http://158.101.156.71:3001/api/devices/token";
+const char* BRIDGE_TOKEN_URL = "https://ximplex.duckdns.org/api/test/devices/token"; //secured
 
 // credential
-const char *ELEVATOR_ID = "E26028"; // Hardcoded for now
+const char *ELEVATOR_ID = "E26028"; 
+const char* DEVICE_SECRET = "ff112335"; 
+
 // const char *ssid = "Flinkone 1-2.4G";
 // const char *password = "ff112335";
 const char *ssid = "";
@@ -293,7 +296,7 @@ void setupMQTT()
 {
   mqttClient.setServer(mqtt_broker, mqtt_port);
   mqttClient.setCallback(callback);
-  mqttClient.setBufferSize(512);
+  mqttClient.setBufferSize(1024);
 }
 
 void isChange(const char *from, uint16_t *data, bool *flag)
@@ -552,8 +555,9 @@ bool fetchJWTToken()
 
   StaticJsonDocument<128> doc;
   doc["deviceId"] = ELEVATOR_ID;
+  doc["deviceSecret"] = DEVICE_SECRET;
 
-  char payload[128];
+  char payload[256];
   serializeJson(doc, payload);
 
   Serial.println("[Auth] Requesting JWT Token from Bridge...");
@@ -1672,7 +1676,7 @@ void setup()
   hasChangedMutex = xSemaphoreCreateMutex();
   modbusMutex = xSemaphoreCreateMutex();
   xTaskCreate(vPollingTask, "PollingTask", 4096, NULL, 4, &pollingTaskHandle);
-  xTaskCreate(vReconnectTask, "ReconnectTask", 4096, NULL, 3, NULL);
+  xTaskCreate(vReconnectTask, "ReconnectTask", 8192, NULL, 3, NULL);
   xTaskCreate(vPublishTask, "PublishTask", 4096, NULL, 3, &publishTaskHandle);
   // xTaskCreate(vFirebasePublishTask, "FirebasePublishTask", 9192, NULL, 3, &firebasePublishTaskHandle);
 
