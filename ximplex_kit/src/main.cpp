@@ -35,7 +35,7 @@ ModbusMaster node;
 uint16_t hreg[8][16];
 
 // credential
-const char *ELEVATOR_ID = "E1"; // Hardcoded for now
+const char *ELEVATOR_ID = "E10"; // Hardcoded for now
 // const char *ssid = "Flinkone 1-2.4G";
 // const char *password = "ff112335";
 const char *ssid = "";
@@ -49,9 +49,6 @@ const int mqtt_port = 1883; // unencrypt
 // publish topics
 char X_pTopic[128] = "";
 char Y_pTopic[128] = "";
-char hour_meter_runtime_pTopic[128] = "";
-char open_time_pTopic[128] = "";
-char close_time_pTopic[128] = "";
 char all_status_pTopic[128] = "";
 char cmd_sTopic[128] = "";
 char ack_pTopic[128] = "";
@@ -102,21 +99,6 @@ String temp_json_string = "";
 
 Preferences preferences;
 
-uint32_t hour_meter_runtime = 0; // from web, set offset hourmerter runtime
-
-uint32_t lastTimeStartRunning = 0;
-uint32_t hour_meter_runtime_offset = 0;
-bool startCountingRuntime = false;
-bool hour_meter_hasChanged = false;
-
-uint32_t openingStartTime = 0;
-uint32_t closingStartTime = 0;
-uint32_t openDuration = 0;
-uint32_t closeDuration = 0;
-int openTime = 0;
-int closeTime = 0;
-bool door_hasChanged = false;
-
 void handleChangeTopic(byte *payload, unsigned int length)
 {
 
@@ -154,13 +136,6 @@ void handleChangeTopic(byte *payload, unsigned int length)
     Y_pTopic[sizeof(Y_pTopic) - 1] = '\0';
     preferences.putString("y_stat_top", newPath);
     Serial.println("Y_pTopic updated!");
-  }
-  else if (strcmp(target, "hour_meter_runtime_pTopic") == 0)
-  {
-    strncpy(hour_meter_runtime_pTopic, newPath, sizeof(hour_meter_runtime_pTopic) - 1);
-    hour_meter_runtime_pTopic[sizeof(hour_meter_runtime_pTopic) - 1] = '\0';
-    preferences.putString("hr_run_top", newPath);
-    Serial.println("Hour Meter Topic updated!");
   }
   else
   {
@@ -237,14 +212,7 @@ void callback(char *topic, byte *payload, unsigned int length)
       Serial.println("Action: Holding Door");
       targetBit = 10;
     }
-    else if (strcmp(type, "resetHourMeter") == 0)
-    {
-      hour_meter_runtime = 0;
-      preferences.begin("my-config", false);
-      preferences.putInt("hourmeter", 0);
-      preferences.end();
-      success = true;
-    }
+
 
     if (targetBit != -1)
     {
@@ -324,140 +292,6 @@ void isChange(const char *from, uint16_t *data, bool *flag)
   }
 }
 
-void elevatorRuntimeCounter(uint16_t y_stat)
-{
-  bool y1 = (y_stat >> 1) & 0x01;
-  bool y2 = (y_stat >> 2) & 0x01;
-  bool isRunning = (y1 || y2);
-
-  if (isRunning && !startCountingRuntime)
-  {
-    lastTimeStartRunning = millis();
-    startCountingRuntime = true;
-    Serial.println("Elevator started moving...");
-  }
-
-  if (!isRunning && startCountingRuntime)
-  {
-    uint32_t runDurationMS = millis() - lastTimeStartRunning;
-
-    hour_meter_runtime += runDurationMS;
-
-    preferences.begin("my-config", false);
-    preferences.putInt("hourmeter", hour_meter_runtime);
-    preferences.end();
-
-    hour_meter_hasChanged = true;
-    if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
-    {
-      setPublishPending();
-      xSemaphoreGive(hasChangedMutex);
-    }
-    startCountingRuntime = false;
-
-    Serial.printf("Elevator stopped. Ran for: %u ms\n", runDurationMS);
-  }
-}
-
-// void doorRuntimeCounter_AUTO(uint16_t x_stat)
-// {
-//   bool isClosedLim = (x_stat >> 7) & 0x01; // X7
-//   bool isOpenLim = (x_stat >> 8) & 0x01;  // X10
-
-//   if (currentState == DOOR_NULL)
-//   {
-//     if (isClosedLim)
-//       currentState = DOOR_CLOSED;
-//     else if (isOpenLim)
-//       currentState = DOOR_OPEN;
-//     return;
-//   }
-
-//   switch (currentState)
-//   {
-//   case DOOR_CLOSED:
-//     if (!isClosedLim)
-//     {
-//       currentState = DOOR_OPENING;
-//       openingStartTime = millis();
-//     }
-//     break;
-
-//   case DOOR_OPENING:
-//     if (isOpenLim)
-//     {
-//       openDuration = millis() - openingStartTime;
-//       openTime++;
-//       currentState = DOOR_OPEN;
-//       door_hasChanged = true;
-//       Serial.printf("Door Opened. Duration: %u ms\n", openDuration);
-//     }
-//     break;
-
-//   case DOOR_OPEN:
-//     if (!isOpenLim)
-//     {
-//       currentState = DOOR_CLOSING;
-//       closingStartTime = millis();
-//     }
-//     break;
-
-//   case DOOR_CLOSING:
-//     if (isClosedLim)
-//     {
-//       closeDuration = millis() - closingStartTime;
-//       closeTime++;
-//       currentState = DOOR_CLOSED;
-//       door_hasChanged = true;
-//       Serial.printf("Door Closed. Duration: %u ms\n", closeDuration);
-//     }
-//     break;
-
-//   }
-// }
-
-
-void doorRuntimeCounter_MANUAL(uint16_t x_stat)
-{
-  bool isClosedLim = (x_stat >> 7) & 0x01; 
-
-  if (currentState == DOOR_NULL)
-  {
-    if (isClosedLim) currentState = DOOR_CLOSED;
-    else currentState = DOOR_OPEN; 
-    return;
-  }
-
-  switch (currentState)
-  {
-    case DOOR_CLOSED:
-      if (!isClosedLim)
-      {
-        currentState = DOOR_OPEN; 
-        openingStartTime = millis(); 
-      }
-      break;
-
-    case DOOR_OPEN:
-      if (isClosedLim)
-      {
-        uint32_t cycleDuration = millis() - openingStartTime;
-
-        openTime++;
-        closeTime++;
-        currentState = DOOR_CLOSED;
-        door_hasChanged = true;
-        if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
-        {
-          setPublishPending();
-          xSemaphoreGive(hasChangedMutex);
-        }
-
-        Serial.printf("Door Cycle Complete. Duration: %u ms. Total Cycles: %u\n", cycleDuration, closeTime);
-      }
-      break;
-  }
-}
 
 void updateTopicFromPrefs(const char *key, char *buffer, size_t bufferSize)
 {
@@ -495,27 +329,9 @@ bool buildCombinedPayload(char *buffer, size_t bufferSize)
     return false;
   }
 
-  // Calculate current floor from Y registers
-  // data[4]: Y0-Y7 (low byte), Y10-Y17 (high byte)
-  // data[5]: Y20-Y27, Y30-Y37
-  int currentFloor = 0;
-  uint16_t y0 = hreg[PLC_slaveID][4];
-  uint16_t y1 = hreg[PLC_slaveID][5];
-
-  if (y0 & (1 << 7)) currentFloor = 1;      // Y7
-  else if (y0 & (1 << 8)) currentFloor = 2; // Y10
-  else if (y0 & (1 << 9)) currentFloor = 3; // Y11
-  else if (y1 & (1 << 4)) currentFloor = 4; // Y24
-
   StaticJsonDocument<256> doc;
   doc["x"] = X_status_payload;
   doc["y"] = Y_status_payload;
-  doc["floor"] = currentFloor;
-  doc["hr"] = hour_meter_runtime;
-  doc["cl_dur"] = closeDuration;
-  doc["op_dur"] = openDuration;
-  doc["op_time"] = openTime;
-  doc["cl_time"] = closeTime;
 
   size_t len = serializeJson(doc, buffer, bufferSize);
   return len > 0;
@@ -593,8 +409,6 @@ void vPollingTask(void *pvParams)
           hreg[PLC_slaveID][6] = node.getResponseBuffer(6);
           hreg[PLC_slaveID][7] = node.getResponseBuffer(7);
 
-          doorRuntimeCounter_MANUAL(hreg[PLC_slaveID][0]);
-          elevatorRuntimeCounter(hreg[PLC_slaveID][4]);
 
           if (xSemaphoreTake(hasChangedMutex, pdMS_TO_TICKS(50)) == pdTRUE)
           {
@@ -637,17 +451,6 @@ void vPublishTask(void *pvParams)
       if (buildCombinedPayload(combinedPayload, sizeof(combinedPayload)))
       {
         publishMqtt(all_status_pTopic, combinedPayload);
-
-        if (door_hasChanged)
-        {
-          preferences.begin("my-config", false);
-          preferences.putInt("opTime", openTime);
-          preferences.putInt("clTime", closeTime);
-          preferences.end();
-
-          door_hasChanged = false;
-        }
-
         Serial.print("Published Combined to MQTT: ");
         Serial.println(combinedPayload);
         Serial.println(currentState);
@@ -782,24 +585,8 @@ bool readSSIDPWDfile(String m_pwd_filename_to_read)
   String m_SSID2_name = m_JSONdoc_from_pwd_file["SSID2"];
   String m_SSID3_name = m_JSONdoc_from_pwd_file["SSID3"];
   String m_PWD1_name = m_JSONdoc_from_pwd_file["PWD1"];
-  String m_PWD2_name = m_JSONdoc_from_pwd_file["PWD1"];
-  String m_PWD3_name = m_JSONdoc_from_pwd_file["PWD1"];
-  // Serial.print("m_SSID1_name = ");
-  // Serial.print(m_SSID1_name);
-  // Serial.print(F("\t")); // tab
-  // Serial.print("m_PWD1_name = ");
-  // Serial.print(F("\t")); // tab
-  // Serial.print("m_SSID2_name = ");
-  // Serial.print(m_SSID2_name);
-  // Serial.print(F("\t")); // tab
-  // Serial.print("m_PWD2_name = ");
-  // Serial.print(m_PWD2_name);
-  // Serial.print(F("\t")); // tab
-  // Serial.print("m_SSID3_name = ");
-  // Serial.print(m_SSID3_name);
-  // Serial.print(F("\t")); // tab
-  // Serial.print("m_PWD3_name = ");
-  // Serial.println(m_PWD3_name);
+  String m_PWD2_name = m_JSONdoc_from_pwd_file["PWD2"];
+  String m_PWD3_name = m_JSONdoc_from_pwd_file["PWD3"];
 
   // Try connecting:
   //****************************8
@@ -920,10 +707,6 @@ void handleGetSavSecreteJson(AsyncWebServerRequest *request)
   }
   request->send(200, "text/HTML", "Credentials saved. Rebooting...");
 
-  // {"SSID1":"myssid1xyz","PWD1":"mypwd1xyz",
-  //     "SSID2":"myssid2xyz","PWD2":"mypwd2xyz",
-  //     "SSID3":"myssid3xyz","PWD3":"mypwd3xyz"}
-
   String SSID_and_pwd_JSON = "";
   SSID_and_pwd_JSON += "{\"SSID1\":\"";
   SSID_and_pwd_JSON += m_SSID1_name;
@@ -1042,11 +825,7 @@ void handleGetSavSecreteJsonNoReboot(AsyncWebServerRequest *request)
   {
     message = "No message sent";
   }
-  // request->send(200, "text/HTML", "bla bla bla bla bla xyz xyz xyz xyz xyz ");
 
-  // {"SSID1":"myssid1xyz","PWD1":"mypwd1xyz",
-  //     "SSID2":"myssid2xyz","PWD2":"mypwd2xyz",
-  //     "SSID3":"myssid3xyz","PWD3":"mypwd3xyz"}
 
   String SSID_and_pwd_JSON = "";
   SSID_and_pwd_JSON += "{\"SSID1\":\"";
@@ -1250,56 +1029,6 @@ void configureserver()
                                                       }
                                                       request1->send(200, "OK"); }));
 
-  // Button #2
-  server.addHandler(new AsyncCallbackJsonWebHandler("/on_Button_DOWN_pressed", [](AsyncWebServerRequest *request2, JsonVariant &json2)
-                                                    {
-                                                      const JsonObject &jsonObj2 = json2.as<JsonObject>();
-                                                      if (jsonObj2["on"])
-                                                      {
-                                                        // Serial.println("Down button pressed.");
-                                                        // Serial.println("------------------");
-                                                        // ws_cmd = true;
-                                                        // ws_cmd_value = toFloor1;
-                                                      }
-                                                      request2->send(200, "OK"); }));
-
-  // Button #11
-  // server.addHandler(new AsyncCallbackJsonWebHandler("/button11pressed", [](AsyncWebServerRequest *request2, JsonVariant &json2)
-  //                                                   {
-  //   const JsonObject &jsonObj2 = json2.as<JsonObject>();
-  //   if (jsonObj2["on"])
-  //   {
-  //     Serial.println("Button 11 pressed. Running DPV sweep.");
-  //     // digitalWrite(LEDPIN, HIGH);
-
-  //   }
-  //   request2->send(200, "OK"); }));
-  // Button #3
-  server.addHandler(new AsyncCallbackJsonWebHandler("/on_Button_STOP_pressed", [](AsyncWebServerRequest *request3, JsonVariant &json3)
-                                                    {
-                                                      const JsonObject &jsonObj3 = json3.as<JsonObject>();
-                                                      if (jsonObj3["on"])
-                                                      {
-                                                        // Serial.println("stop button pressed. Stopping all movement!");
-                                                        // Serial.println("------------------");
-                                                        // ws_cmd = true;
-                                                        // ws_cmd_value = STOP;
-                                                      }
-                                                      request3->send(200, "OK"); }));
-
-  // Button #4
-  server.addHandler(new AsyncCallbackJsonWebHandler("/on_Button_EMERGENCY_pressed", [](AsyncWebServerRequest *request4, JsonVariant &json4)
-                                                    {
-                                                      const JsonObject &jsonObj4 = json4.as<JsonObject>();
-                                                      if (jsonObj4["on"])
-                                                      {
-                                                        // Serial.println("Emergency button pressed. Stopping all movement immediately!");
-                                                        // Serial.println("------------------");
-                                                        // ws_cmd = true;
-                                                        // ws_cmd_value = POWER_CUT;
-                                                      }
-                                                      request4->send(200, "OK"); }));
-
   server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
 
   // server.on("/downloadfile", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -1339,11 +1068,6 @@ void configureserver()
                 AsyncWebParameter *p = request->getParam(i);
                 if (p->isPost())
                 {
-                  // Serial.print(i);
-                  // Serial.print(F("\t"));
-                  // Serial.print(p->name().c_str());
-                  // Serial.print(F("\t"));
-                  // Serial.println(p->value().c_str());
                   String paramName = p->name();
                   String paramValue = p->value();
 
@@ -1352,28 +1076,12 @@ void configureserver()
                   Serial.print(" = ");
                   Serial.println(paramValue);
 
-                  if (paramName == "hmt_runtime_param")
-                  {
-                    uint32_t hour_meter_runtime_offset_MS;
-                    hour_meter_runtime_offset = paramValue.toInt();
-                    hour_meter_runtime_offset_MS = hour_meter_runtime_offset * 60 * 1000; // Convert minutes to milliseconds
-
-                    if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
-                    {
-                      hour_meter_runtime += hour_meter_runtime_offset_MS;
-                      hour_meter_hasChanged = true;
-                      xSemaphoreGive(hasChangedMutex);
-                    }
-
-                    preferences.putUInt("hourmeter", hour_meter_runtime);
-                  }
+                  //logic for updating variables based on parameter names here
                 }
               }
 
               preferences.end();
-              Serial.println("--- Updated Variables ---");
-              Serial.printf("Hour Meter Offset: %d\n", hour_meter_runtime_offset);
-              //**********************************************
+             //**********************************************
 
               if (request->hasParam(PARAM_MESSAGE, true))
               {
@@ -1497,28 +1205,7 @@ void setup()
     else if (strcmp(cmd, "holdDoor") == 0) {
       targetBit = 10;
     }
-    else if (strcmp(cmd, "RESET_HOUR_METER") == 0) {
-      hour_meter_runtime = 0;
-      preferences.begin("my-config", false);
-      preferences.putUInt("hourmeter", 0);
-      preferences.end();
-      success = true;
-    } 
-    else if (strcmp(cmd, "RESET_DOOR_COUNT") == 0) {
-      openTime = 0;
-      closeTime = 0;
-      preferences.begin("my-config", false);
-      preferences.putInt("opTime", 0);
-      preferences.putInt("clTime", 0);
-      preferences.end();
-      success = true;
-    }
-    else if (strcmp(cmd, "REBOOT") == 0) {
-      g_comm->acknowledgeCommand(id, "SUCCESS");
-      delay(500);
-      ESP.restart();
-      return; // Won't reach here
-    }
+
 
     if (targetBit != -1) {
       // Pulse logic: Set bit HIGH, wait 200ms, set bit LOW on address 20
@@ -1566,27 +1253,9 @@ void setup()
   X_pTopic[sizeof(X_pTopic) - 1] = '\0';
   strncpy(Y_pTopic, DEFAULT_Y_PTOPIC, sizeof(Y_pTopic) - 1);
   Y_pTopic[sizeof(Y_pTopic) - 1] = '\0';
-  strncpy(hour_meter_runtime_pTopic, DEFAULT_HOUR_METER_RUNTIME_PTOPIC, sizeof(hour_meter_runtime_pTopic) - 1);
-  hour_meter_runtime_pTopic[sizeof(hour_meter_runtime_pTopic) - 1] = '\0';
 
-  preferences.begin("my-config", false); // read only
-  hour_meter_runtime = preferences.getUInt("hourmeter", 0);
-  openTime = preferences.getInt("opTime", 0);
-  closeTime = preferences.getInt("clTime", 0);
-  updateTopicFromPrefs("x_stat_top", X_pTopic, sizeof(X_pTopic));
-  updateTopicFromPrefs("y_stat_top", Y_pTopic, sizeof(Y_pTopic));
-  updateTopicFromPrefs("hr_run_top", hour_meter_runtime_pTopic, sizeof(hour_meter_runtime_pTopic));
-  updateTopicFromPrefs("openTime_top", open_time_pTopic, sizeof(open_time_pTopic));
-  updateTopicFromPrefs("closeTime_top", close_time_pTopic, sizeof(close_time_pTopic));
-  preferences.end();
 
-  Serial.println("--- Loaded Settings ---");
-  Serial.printf("Hour Meter Offset: %d\n", hour_meter_runtime_offset);
-  Serial.printf("X Status Topic: %s\n", X_pTopic);
-  Serial.printf("Y Status Topic: %s\n", Y_pTopic);
-  Serial.printf("Hour Meter Runtime Topic: %s\n", hour_meter_runtime_pTopic);
-  Serial.printf("Open Time Topic: %s\n", open_time_pTopic);
-  Serial.printf("Close Time Topic: %s\n", close_time_pTopic);
+
 
   pinMode(WIFI_READY, OUTPUT);
   mqttMutex = xSemaphoreCreateRecursiveMutex();
