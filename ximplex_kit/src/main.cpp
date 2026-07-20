@@ -76,15 +76,19 @@ char Y_status_payload[64];
 
 char X_prev[64] = "";
 char Y_prev[64] = "";
+
+char alarm_pTopic[128] = "";
 uint16_t prev_servo_alarm = 0xFFFF;
 char alarm_status_payload[16] = "AL000";
+bool alarmPublishPending = false;
 
 bool XY_hasChanged = true;
 bool mqttPublishPending = true;
 bool firebasePublishPending = true;
 uint32_t ChangeSlaveInterval = 500;
 
-bool buildCombinedPayload(char *buffer, size_t bufferSize);
+bool buildStatePayload(char *buffer, size_t bufferSize);  
+bool buildAlarmPayload(char *buffer, size_t bufferSize);
 void setPublishPending();
 
 AsyncWebServer server(80); //
@@ -331,17 +335,26 @@ void publishMqtt(const char *topic, const char *msg)
   }
 }
 
-bool buildCombinedPayload(char *buffer, size_t bufferSize)
+bool buildStatePayload(char *buffer, size_t bufferSize)
 {
-  if (!buffer || bufferSize == 0)
-  {
-    return false;
-  }
+  if (!buffer || bufferSize == 0) return false;
 
   StaticJsonDocument<256> doc;
   doc["x"] = X_status_payload;
   doc["y"] = Y_status_payload;
-  doc["alarm"] = alarm_status_payload;
+  // doc["sensors"]["weight"] = current_weight;   //etra_spec_reading add here
+
+  size_t len = serializeJson(doc, buffer, bufferSize);
+  return len > 0;
+}
+
+bool buildAlarmPayload(char *buffer, size_t bufferSize)
+{
+  if (!buffer || bufferSize == 0) return false;
+
+  StaticJsonDocument<128> doc;
+  doc["alarm"] = alarm_status_payload; 
+  
   size_t len = serializeJson(doc, buffer, bufferSize);
   return len > 0;
 }
@@ -457,7 +470,7 @@ void vPollingTask(void *pvParams)
             Serial.printf("Servo Alarm Changed: %s\n", alarm_status_payload);
             if (xSemaphoreTake(hasChangedMutex, pdMS_TO_TICKS(50)) == pdTRUE)
             {
-              setPublishPending();
+              alarmPublishPending = true;
               xSemaphoreGive(hasChangedMutex);
             }
           }
@@ -481,27 +494,43 @@ void vPublishTask(void *pvParams)
 {
   for (;;)
   {
-    bool shouldPublish = false;
+    bool shouldPublishState = false;
+    bool shouldPublishAlarm = false;
 
     if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
     {
       if (mqttPublishPending)
       {
-        shouldPublish = true;
+        shouldPublishState = true;
         mqttPublishPending = false;
+      }
+      if (alarmPublishPending)
+      {
+        shouldPublishAlarm = true;
+        alarmPublishPending = false;
       }
       xSemaphoreGive(hasChangedMutex);
     }
 
-    if (shouldPublish)
+    if (shouldPublishState)
     {
-      char combinedPayload[256];
-      if (buildCombinedPayload(combinedPayload, sizeof(combinedPayload)))
+      char statePayload[256];
+      if (buildStatePayload(statePayload, sizeof(statePayload)))
       {
-        publishMqtt(all_status_pTopic, combinedPayload);
-        Serial.print("Published Combined to MQTT: ");
-        Serial.println(combinedPayload);
-        Serial.println(currentState);
+        publishMqtt(all_status_pTopic, statePayload);
+        Serial.print("Published State to MQTT: ");
+        Serial.println(statePayload);
+      }
+    }
+
+    if (shouldPublishAlarm)
+    {
+      char alarmPayload[128];
+      if (buildAlarmPayload(alarmPayload, sizeof(alarmPayload)))
+      {
+        publishMqtt(alarm_pTopic, alarmPayload);
+        Serial.print("Published Alarm to MQTT: ");
+        Serial.println(alarmPayload);
       }
     }
 
@@ -527,18 +556,18 @@ void vFirebasePublishTask(void *pvParams)
 
     if (shouldPublish && g_comm && WiFi.status() == WL_CONNECTED)
     {
-      char combinedPayload[256];
-      if (buildCombinedPayload(combinedPayload, sizeof(combinedPayload)))
+      char statePayload[256];
+      if (buildStatePayload(statePayload, sizeof(statePayload)))
       {
         if (xSemaphoreTake(firebaseMutex, portMAX_DELAY) == pdTRUE)
         {
-          // g_comm->sendStatus(combinedPayload);
-          g_comm->pushHistory("status", combinedPayload);
+          // g_comm->sendStatus(statePayload);
+          g_comm->pushHistory("status", statePayload);
           xSemaphoreGive(firebaseMutex);
         }
 
-        Serial.print("Published Combined to Firebase: ");
-        Serial.println(combinedPayload);
+        Serial.print("Published State to Firebase: ");
+        Serial.println(statePayload);
       }
     }
 
@@ -1293,6 +1322,7 @@ void setup()
   snprintf(cmd_sTopic, sizeof(cmd_sTopic), "elevator/%s/cmd", ELEVATOR_ID);
   snprintf(ack_pTopic, sizeof(ack_pTopic), "elevator/%s/ack", ELEVATOR_ID);
   snprintf(all_status_pTopic, sizeof(all_status_pTopic), "elevator/%s/state", ELEVATOR_ID);
+  snprintf(alarm_pTopic, sizeof(alarm_pTopic), "elevator/%s/alarm", ELEVATOR_ID);
 
   // Legacy topics (Optional fallback, but prioritizing new ones)
   strncpy(X_pTopic, DEFAULT_X_PTOPIC, sizeof(X_pTopic) - 1);
