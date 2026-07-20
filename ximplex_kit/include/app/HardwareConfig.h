@@ -11,6 +11,7 @@ static constexpr int PLC_slaveID = 1;
 static constexpr int SERVO_slaveID = 2;
 
 // Register addresses
+const uint16_t SERVO_ALARM_ADDR = 0x0002;
 static constexpr int X0_ADD = 0;
 static constexpr int Y0_ADD = 4;
 

@@ -33,6 +33,7 @@ TaskHandle_t publishTaskHandle = NULL;
 ModbusMaster node;
 
 uint16_t hreg[8][16];
+uint16_t servo_data[8][16];
 
 // credential
 const char *ELEVATOR_ID = "E10"; // Hardcoded for now
@@ -59,7 +60,7 @@ const char *listenToAll_sTopic = DEFAULT_LISTEN_ALL_STOPIC;
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
-SemaphoreHandle_t mqttMutex; // Mutex to protect MQTT client
+SemaphoreHandle_t mqttMutex;     // Mutex to protect MQTT client
 SemaphoreHandle_t firebaseMutex; // Mutex to protect Firebase access
 SemaphoreHandle_t hasChangedMutex;
 SemaphoreHandle_t modbusMutex; // Mutex to protect Modbus communication
@@ -75,6 +76,8 @@ char Y_status_payload[64];
 
 char X_prev[64] = "";
 char Y_prev[64] = "";
+uint16_t prev_servo_alarm = 0xFFFF;
+char alarm_status_payload[16] = "AL000";
 
 bool XY_hasChanged = true;
 bool mqttPublishPending = true;
@@ -153,7 +156,8 @@ void sendAck(const char *msgId, bool ok, const char *error = NULL)
   doc["msgId"] = msgId;
   doc["ts"] = millis();
   doc["ok"] = ok;
-  if (error) doc["error"] = error;
+  if (error)
+    doc["error"] = error;
 
   char buffer[256];
   serializeJson(doc, buffer);
@@ -163,7 +167,8 @@ void sendAck(const char *msgId, bool ok, const char *error = NULL)
 void callback(char *topic, byte *payload, unsigned int length)
 {
   Serial.printf("Message arrived [%s] Content: ", topic);
-  for (int i = 0; i < length; i++) Serial.print((char)payload[i]);
+  for (int i = 0; i < length; i++)
+    Serial.print((char)payload[i]);
   Serial.println();
 
   // Handle Secure Bridge Commands
@@ -192,10 +197,14 @@ void callback(char *topic, byte *payload, unsigned int length)
     {
       int floor = doc["payload"]["floor"] | -1;
       Serial.printf("Action: Moving to floor %d\n", floor);
-      if (floor == 1) targetBit = 0;
-      else if (floor == 2) targetBit = 1;
-      else if (floor == 3) targetBit = 2;
-      else if (floor == 4) targetBit = 3;
+      if (floor == 1)
+        targetBit = 0;
+      else if (floor == 2)
+        targetBit = 1;
+      else if (floor == 3)
+        targetBit = 2;
+      else if (floor == 4)
+        targetBit = 3;
     }
     else if (strcmp(type, "openDoor") == 0)
     {
@@ -213,20 +222,21 @@ void callback(char *topic, byte *payload, unsigned int length)
       targetBit = 10;
     }
 
-
     if (targetBit != -1)
     {
       // Pulse logic: Set bit HIGH, wait 200ms, set bit LOW on address 20
-      if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+      if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(500)) == pdTRUE)
+      {
         node.writeSingleRegister(controlAddr, (1 << targetBit));
         Serial.printf("Set bit %d HIGH at control address %d\n", targetBit, controlAddr);
         xSemaphoreGive(modbusMutex);
-        
-        vTaskDelay(pdMS_TO_TICKS(1000));      
-        
-        if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+
+        if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(500)) == pdTRUE)
+        {
           node.writeSingleRegister(controlAddr, 0);
-          Serial.printf("Set control address %d LOW\n", controlAddr); 
+          Serial.printf("Set control address %d LOW\n", controlAddr);
           xSemaphoreGive(modbusMutex);
           success = true;
         }
@@ -263,7 +273,7 @@ void isChange(const char *from, uint16_t *data, bool *flag)
     // data[1]: X20-X27, X30-X37
     // data[2]: X40-X47, X50-X57
     // data[3]: X60-X67, X70-X77
-    
+
     // We format these as a single hex string for efficient transmission
     snprintf(X_temp, sizeof(X_temp), "%04X%04X%04X%04X",
              data[0], data[1], data[2], data[3]);
@@ -291,7 +301,6 @@ void isChange(const char *from, uint16_t *data, bool *flag)
     }
   }
 }
-
 
 void updateTopicFromPrefs(const char *key, char *buffer, size_t bufferSize)
 {
@@ -332,7 +341,7 @@ bool buildCombinedPayload(char *buffer, size_t bufferSize)
   StaticJsonDocument<256> doc;
   doc["x"] = X_status_payload;
   doc["y"] = Y_status_payload;
-
+  doc["alarm"] = alarm_status_payload;
   size_t len = serializeJson(doc, buffer, bufferSize);
   return len > 0;
 }
@@ -384,32 +393,42 @@ void vReconnectTask(void *pvParams)
   }
 }
 
+bool readDataFrom(uint8_t slaveID, uint16_t startAddress, uint8_t numRead, uint16_t *hreg_row)
+{
+  node.begin(slaveID, Serial1);
+  uint8_t result = node.readHoldingRegisters(startAddress, numRead);
+
+  if (result == node.ku8MBSuccess)
+  {
+    for (int i = 0; i < numRead; i++)
+    {
+      hreg_row[i] = node.getResponseBuffer(i);
+    }
+    return true;
+  }
+  else
+  {
+    Serial.print("Error at ID ");
+    Serial.print(slaveID);
+    Serial.print(": ");
+    Serial.println(result, HEX);
+    return false;
+  }
+}
+
 void vPollingTask(void *pvParams)
 {
+  const uint16_t SERVO_ALARM_ADDR = 0x0002;
+
   for (;;)
   {
-    uint32_t result;
-    digitalWrite(WIFI_READY, HIGH);
-    
     if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(200)) == pdTRUE)
     {
       switch (curr_slave)
       {
       case PLC:
-        result = node.readHoldingRegisters(X0_ADD, 8); 
-        if (result == node.ku8MBSuccess)
+        if (readDataFrom(PLC_slaveID, X0_ADD, 8, hreg[PLC_slaveID]))
         {
-          hreg[PLC_slaveID][0] = node.getResponseBuffer(0);
-          hreg[PLC_slaveID][1] = node.getResponseBuffer(1);
-          hreg[PLC_slaveID][2] = node.getResponseBuffer(2);
-          hreg[PLC_slaveID][3] = node.getResponseBuffer(3);
-
-          hreg[PLC_slaveID][4] = node.getResponseBuffer(4);
-          hreg[PLC_slaveID][5] = node.getResponseBuffer(5);
-          hreg[PLC_slaveID][6] = node.getResponseBuffer(6);
-          hreg[PLC_slaveID][7] = node.getResponseBuffer(7);
-
-
           if (xSemaphoreTake(hasChangedMutex, pdMS_TO_TICKS(50)) == pdTRUE)
           {
             isChange("PLC", hreg[PLC_slaveID], &XY_hasChanged);
@@ -418,9 +437,38 @@ void vPollingTask(void *pvParams)
         }
         else
         {
-          Serial.printf("Modbus error: %02X\n", result);
+          Serial.println("Failed to read from PLC");
         }
+
         last_slave = PLC;
+        curr_slave = SERVO;
+        break;
+
+      case SERVO:
+        if (readDataFrom(SERVO_slaveID, SERVO_ALARM_ADDR, 1, servo_data[SERVO_slaveID]))
+        {
+          uint16_t rawAlarm = servo_data[SERVO_slaveID][0];
+
+          if (rawAlarm != prev_servo_alarm)
+          {
+
+            prev_servo_alarm = rawAlarm;
+            snprintf(alarm_status_payload, sizeof(alarm_status_payload), "AL%03X", rawAlarm);
+            Serial.printf("Servo Alarm Changed: %s\n", alarm_status_payload);
+            if (xSemaphoreTake(hasChangedMutex, pdMS_TO_TICKS(50)) == pdTRUE)
+            {
+              setPublishPending();
+              xSemaphoreGive(hasChangedMutex);
+            }
+          }
+        }
+        else
+        {
+          Serial.println("Failed to read from SERVO");
+        }
+
+        last_slave = SERVO;
+        curr_slave = PLC;
         break;
       }
       xSemaphoreGive(modbusMutex);
@@ -826,7 +874,6 @@ void handleGetSavSecreteJsonNoReboot(AsyncWebServerRequest *request)
     message = "No message sent";
   }
 
-
   String SSID_and_pwd_JSON = "";
   SSID_and_pwd_JSON += "{\"SSID1\":\"";
   SSID_and_pwd_JSON += m_SSID1_name;
@@ -905,7 +952,7 @@ void getWifiScanJson(AsyncWebServerRequest *request)
       json += "\"RSSI\":";
       json += String(WiFi.RSSI(i));
       json += ",\"SSID\":\"";
-      json +=  WiFi.SSID(i);
+      json += WiFi.SSID(i);
       json += "\"";
       json += "}";
     }
@@ -1076,12 +1123,12 @@ void configureserver()
                   Serial.print(" = ");
                   Serial.println(paramValue);
 
-                  //logic for updating variables based on parameter names here
+                  // logic for updating variables based on parameter names here
                 }
               }
 
               preferences.end();
-             //**********************************************
+              //**********************************************
 
               if (request->hasParam(PARAM_MESSAGE, true))
               {
@@ -1158,7 +1205,7 @@ void setup()
   mac.replace(":", "");
   String dynamicId = "ESP32_";
   dynamicId += mac;
-  
+
   String dynamicDevicePath = "/devices/";
   dynamicDevicePath += dynamicId;
   Serial.print("Dynamic Firebase Device Path: ");
@@ -1247,15 +1294,11 @@ void setup()
   snprintf(ack_pTopic, sizeof(ack_pTopic), "elevator/%s/ack", ELEVATOR_ID);
   snprintf(all_status_pTopic, sizeof(all_status_pTopic), "elevator/%s/state", ELEVATOR_ID);
 
-
   // Legacy topics (Optional fallback, but prioritizing new ones)
   strncpy(X_pTopic, DEFAULT_X_PTOPIC, sizeof(X_pTopic) - 1);
   X_pTopic[sizeof(X_pTopic) - 1] = '\0';
   strncpy(Y_pTopic, DEFAULT_Y_PTOPIC, sizeof(Y_pTopic) - 1);
   Y_pTopic[sizeof(Y_pTopic) - 1] = '\0';
-
-
-
 
   pinMode(WIFI_READY, OUTPUT);
   mqttMutex = xSemaphoreCreateRecursiveMutex();
