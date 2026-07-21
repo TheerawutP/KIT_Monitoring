@@ -37,14 +37,13 @@ uint16_t servo_data[8][16];
 
 // credential
 const char *ELEVATOR_ID = "E10"; // Hardcoded for now
-// const char *ssid = "Flinkone 1-2.4G";
-// const char *password = "ff112335";
+const char *DEVICE_SECRET = "ff112335";
+
 const char *ssid = "";
-const char *password = "";
-// const char *mqtt_broker = "kit.flinkone.com";
-// const int mqtt_port = 1883; // unencrypt
+const char *password = ""
+;
 const char *mqtt_broker = "158.101.156.71";
-const int mqtt_port = 1883; // unencrypt
+const int mqtt_port = 8883; //encrypted
 
 // topics
 // publish topics
@@ -57,7 +56,7 @@ char ack_pTopic[128] = "";
 // subs topics
 const char *listenToAll_sTopic = DEFAULT_LISTEN_ALL_STOPIC;
 
-WiFiClient wifiClient;
+WiFiClientSecure wifiClient;
 PubSubClient mqttClient(wifiClient);
 
 SemaphoreHandle_t mqttMutex;     // Mutex to protect MQTT client
@@ -423,7 +422,7 @@ void vReconnectTask(void *pvParams)
           String clientId = "ESP32-";
           clientId += String(random(0xffff), HEX); // Unique ID
 
-          if (mqttClient.connect(clientId.c_str()))
+          if (mqttClient.connect(clientId.c_str(), ELEVATOR_ID, DEVICE_SECRET)) // Using DEVICE_SECRET as password
           {
             Serial.println("connected");
             mqttClient.subscribe(listenToAll_sTopic);
@@ -1401,7 +1400,7 @@ void setup()
   Serial1.begin(38400, SERIAL_8E1, PIN_RX, PIN_TX);
   node.begin(PLC_slaveID, Serial1);
 
-  // wifiClient.setInsecure();
+  wifiClient.setInsecure();
   Serial.println(WiFi.localIP());
   setupMQTT();
 
@@ -1427,7 +1426,7 @@ void setup()
   hasChangedMutex = xSemaphoreCreateMutex();
   modbusMutex = xSemaphoreCreateMutex();
   xTaskCreate(vPollingTask, "PollingTask", 4096, NULL, 4, &pollingTaskHandle);
-  xTaskCreate(vReconnectTask, "ReconnectTask", 4096, NULL, 3, NULL);
+  xTaskCreate(vReconnectTask, "ReconnectTask", 8192, NULL, 3, NULL);
   xTaskCreate(vPublishTask, "PublishTask", 4096, NULL, 3, &publishTaskHandle);
   // xTaskCreate(vFirebasePublishTask, "FirebasePublishTask", 9192, NULL, 3, &firebasePublishTaskHandle);
 
