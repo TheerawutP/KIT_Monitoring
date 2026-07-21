@@ -87,7 +87,40 @@ bool mqttPublishPending = true;
 bool firebasePublishPending = true;
 uint32_t ChangeSlaveInterval = 500;
 
-bool buildStatePayload(char *buffer, size_t bufferSize);  
+// 1. mapping reg
+struct ServoLiveReadings
+{
+  uint16_t alarm_code = 0;   // P0-01: Alarm Code
+  uint16_t status_flags = 0; // P0-46: SVSTS (Status Flags SRDY, ZSPD, BRKR)
+  int32_t speed_rpm = 0;     // P0-09: speed (r/min)
+  int32_t avg_load_pct = 0;  // P0-10: avg load (%)
+  int32_t peak_load_pct = 0; // P0-11: peak load (%)
+  int32_t igbt_temp = 0;     // P0-12: temp IGBT (°C)
+  int32_t bus_voltage = 0;   // P0-13: voltage DC Bus (Volt)
+} g_servoLive;
+
+// 2. struct for containing register mapping information
+struct ServoRegMap
+{
+  uint16_t address; // Modbus Address (ref: Delta ASDA-B2)
+  uint8_t readLen;  // Length Word (1 = 16-bit, 2 = 32-bit)
+  const char *key;  // Key name in json
+};
+
+// 3.  Array Map Polling  //ref delta-b2
+const ServoRegMap SERVO_POLL_MAP[] = {
+    {0x0002, 1, "alarm_code"},    // P0-01: Alarm Code
+    {0x005C, 1, "status_flags"},  // P0-46: SVSTS (Digital Output Status)
+    {0x0012, 2, "speed_rpm"},     // P0-09: Status Monitor 1 (set P0-17 = 7)
+    {0x0014, 2, "avg_load_pct"},  // P0-10: Status Monitor 2 (set P0-18 = 12)
+    {0x0016, 2, "peak_load_pct"}, // P0-11: Status Monitor 3 (set P0-19 = 13)
+    {0x0018, 2, "igbt_temp"},     // P0-12: Status Monitor 4 (set P0-20 = 16)
+    {0x001A, 2, "bus_voltage"}    // P0-13: Status Monitor 5 (set P0-21 = 14)
+};
+
+const size_t SERVO_POLL_COUNT = sizeof(SERVO_POLL_MAP) / sizeof(SERVO_POLL_MAP[0]);
+
+bool buildStatePayload(char *buffer, size_t bufferSize);
 bool buildAlarmPayload(char *buffer, size_t bufferSize);
 void setPublishPending();
 
@@ -337,24 +370,33 @@ void publishMqtt(const char *topic, const char *msg)
 
 bool buildStatePayload(char *buffer, size_t bufferSize)
 {
-  if (!buffer || bufferSize == 0) return false;
+  if (!buffer || bufferSize == 0)
+    return false;
 
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<512> doc;
   doc["x"] = X_status_payload;
   doc["y"] = Y_status_payload;
-  // doc["sensors"]["weight"] = current_weight;   //etra_spec_reading add here
 
+  // data from servo
+  JsonObject live = doc.createNestedObject("live_readings");
+  live["speed_rpm"] = g_servoLive.speed_rpm;
+  live["avg_load_pct"] = g_servoLive.avg_load_pct;
+  live["peak_load_pct"] = g_servoLive.peak_load_pct;
+  live["igbt_temp_c"] = g_servoLive.igbt_temp;
+  live["bus_voltage"] = g_servoLive.bus_voltage;
+  live["status_flags"] = g_servoLive.status_flags;
   size_t len = serializeJson(doc, buffer, bufferSize);
   return len > 0;
 }
 
 bool buildAlarmPayload(char *buffer, size_t bufferSize)
 {
-  if (!buffer || bufferSize == 0) return false;
+  if (!buffer || bufferSize == 0)
+    return false;
 
   StaticJsonDocument<128> doc;
-  doc["alarm"] = alarm_status_payload; 
-  
+  doc["alarm"] = alarm_status_payload;
+
   size_t len = serializeJson(doc, buffer, bufferSize);
   return len > 0;
 }
@@ -458,31 +500,69 @@ void vPollingTask(void *pvParams)
         break;
 
       case SERVO:
-        if (readDataFrom(SERVO_slaveID, SERVO_ALARM_ADDR, 1, servo_data[SERVO_slaveID]))
+      {
+        uint16_t tempBuffer[2];
+        bool anyReadFailed = false;
+
+        for (size_t i = 0; i < SERVO_POLL_COUNT; i++)
         {
-          uint16_t rawAlarm = servo_data[SERVO_slaveID][0];
+          uint16_t addr = SERVO_POLL_MAP[i].address;
+          uint8_t len = SERVO_POLL_MAP[i].readLen;
 
-          if (rawAlarm != prev_servo_alarm)
+          if (readDataFrom(SERVO_slaveID, addr, len, tempBuffer))
           {
-
-            prev_servo_alarm = rawAlarm;
-            snprintf(alarm_status_payload, sizeof(alarm_status_payload), "AL%03X", rawAlarm);
-            Serial.printf("Servo Alarm Changed: %s\n", alarm_status_payload);
-            if (xSemaphoreTake(hasChangedMutex, pdMS_TO_TICKS(50)) == pdTRUE)
+            // length 2 Word to g_servoLive
+            if (addr == 0x0002)
             {
-              alarmPublishPending = true;
-              xSemaphoreGive(hasChangedMutex);
+              g_servoLive.alarm_code = tempBuffer[0];
+            }
+            else if (addr == 0x005C)
+            {
+              g_servoLive.status_flags = tempBuffer[0];
+            }
+            else
+            {
+              // for 32-bit length (2 Words) of P0-09 to P0-13
+              int32_t val32 = ((int32_t)tempBuffer[1] << 16) | tempBuffer[0];
+
+              if (addr == 0x0012)
+                g_servoLive.speed_rpm = val32;
+              else if (addr == 0x0014)
+                g_servoLive.avg_load_pct = val32;
+              else if (addr == 0x0016)
+                g_servoLive.peak_load_pct = val32;
+              else if (addr == 0x0018)
+                g_servoLive.igbt_temp = val32;
+              else if (addr == 0x001A)
+                g_servoLive.bus_voltage = val32;
             }
           }
+          else
+          {
+            anyReadFailed = true;
+            Serial.printf("Failed to read Servo register: 0x%04X\n", addr);
+          }
+          vTaskDelay(pdMS_TO_TICKS(100));
         }
-        else
+
+        // check alarm if changed
+        if (g_servoLive.alarm_code != prev_servo_alarm)
         {
-          Serial.println("Failed to read from SERVO");
+          prev_servo_alarm = g_servoLive.alarm_code;
+          snprintf(alarm_status_payload, sizeof(alarm_status_payload), "AL%03X", g_servoLive.alarm_code);
+          Serial.printf("Servo Alarm Changed: %s\n", alarm_status_payload);
+
+          if (xSemaphoreTake(hasChangedMutex, pdMS_TO_TICKS(50)) == pdTRUE)
+          {
+            alarmPublishPending = true;
+            xSemaphoreGive(hasChangedMutex);
+          }
         }
 
         last_slave = SERVO;
         curr_slave = PLC;
-        break;
+      }
+      break;
       }
       xSemaphoreGive(modbusMutex);
     }
@@ -492,10 +572,15 @@ void vPollingTask(void *pvParams)
 
 void vPublishTask(void *pvParams)
 {
+
+  const unsigned long STATE_PUBLISH_INTERVAL = 3000;
+  unsigned long lastStatePublishTime = 0;
+
   for (;;)
   {
     bool shouldPublishState = false;
     bool shouldPublishAlarm = false;
+    unsigned long now = millis();
 
     if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
     {
@@ -512,9 +597,15 @@ void vPublishTask(void *pvParams)
       xSemaphoreGive(hasChangedMutex);
     }
 
+    if (now - lastStatePublishTime >= STATE_PUBLISH_INTERVAL)
+    {
+      shouldPublishState = true;
+      lastStatePublishTime = now;
+    }
+
     if (shouldPublishState)
     {
-      char statePayload[256];
+      char statePayload[512];
       if (buildStatePayload(statePayload, sizeof(statePayload)))
       {
         publishMqtt(all_status_pTopic, statePayload);
