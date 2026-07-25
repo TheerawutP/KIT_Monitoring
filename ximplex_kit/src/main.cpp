@@ -12,6 +12,7 @@
 #include <PubSubClient.h>
 #include <ModbusMaster.h>
 #include <ArduinoJson.h>
+#include <time.h>
 
 #include <WiFiClientSecure.h>
 // #include <HTTPUpdate.h>
@@ -40,10 +41,9 @@ const char *ELEVATOR_ID = "E10"; // Hardcoded for now
 const char *DEVICE_SECRET = "ff112335";
 
 const char *ssid = "";
-const char *password = ""
-;
+const char *password = "";
 const char *mqtt_broker = "158.101.156.71";
-const int mqtt_port = 8883; //encrypted
+const int mqtt_port = 8883; // encrypted
 
 // topics
 // publish topics
@@ -137,6 +137,73 @@ bool restartSystem = false;
 String temp_json_string = "";
 
 Preferences preferences;
+
+String caCertContent;
+String clientCertContent;
+String clientKeyContent;
+
+String readFileFromSPIFFS(const char *path)
+{
+  File file = SPIFFS.open(path, "r");
+  if (!file || file.isDirectory())
+  {
+    Serial.printf("Failed to open file for reading: %s\n", path);
+    return "";
+  }
+  String content = file.readString();
+  file.close();
+  return content;
+}
+
+void syncTimeNTP()
+{
+  Serial.print("Syncing time via NTP");
+  configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+
+  time_t now = time(nullptr);
+  int retry = 0;
+  while (now < 24 * 3600 && retry < 20)
+  {
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+    retry++;
+  }
+
+  if (now > 24 * 3600)
+  {
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    Serial.println("\n✅ Time synced successfully: ");
+    Serial.println(asctime(&timeinfo));
+  }
+  else
+  {
+    Serial.println("\n⚠️ NTP Sync failed! mTLS connection might fail if time is incorrect.");
+  }
+}
+
+bool setupmTLS()
+{
+  caCertContent = readFileFromSPIFFS("/ca.crt");
+  clientCertContent = readFileFromSPIFFS("/client.crt");
+  clientKeyContent = readFileFromSPIFFS("/client.key");
+
+  // ตรวจสอบว่าอ่านไฟล์สำเร็จหรือไม่
+  if (caCertContent == "" || clientCertContent == "" || clientKeyContent == "")
+  {
+    Serial.println("❌ mTLS Setup Failed: Missing cert/key files in SPIFFS!");
+    return false;
+  }
+
+  // 2. นำข้อมูล Certificate ตั้งค่าเข้า wifiClient
+  wifiClient.setCACert(caCertContent.c_str());
+  wifiClient.setCertificate(clientCertContent.c_str());
+  wifiClient.setPrivateKey(clientKeyContent.c_str());
+
+  Serial.println("🔒 mTLS Certificates loaded successfully!");
+  return true;
+}
 
 void handleChangeTopic(byte *payload, unsigned int length)
 {
@@ -1400,7 +1467,13 @@ void setup()
   Serial1.begin(38400, SERIAL_8E1, PIN_RX, PIN_TX);
   node.begin(PLC_slaveID, Serial1);
 
-  wifiClient.setInsecure();
+  syncTimeNTP();
+
+  if (!setupmTLS())
+  {
+    Serial.println("Warning: Could not setup mTLS properly.");
+  }
+
   Serial.println(WiFi.localIP());
   setupMQTT();
 
