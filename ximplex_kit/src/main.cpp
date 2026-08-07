@@ -15,7 +15,9 @@
 #include <time.h>
 
 #include <WiFiClientSecure.h>
-// #include <HTTPUpdate.h>
+#include <HTTPClient.h>
+#include <HTTPUpdate.h>
+#include <Update.h>
 #include <Preferences.h>
 
 #include "communication/ICommunicationService.h"
@@ -25,6 +27,9 @@
 #include "app/AppTypes.h"
 #include "app/DefaultTopics.h"
 #include "app/HardwareConfig.h"
+
+const char *firmware_url = "https://xim-sharklice.web.app/firmware_kit.bin";
+const char *filesystem_url = "https://xim-sharklice.web.app/spiffs_kit.bin";
 
 // const char *firmwareURL = "https://raw.githubusercontent.com/TheerawutP/test_OTA/main/MCU.ino.bin";
 // bool shouldUpdateFirmware = false;
@@ -268,6 +273,103 @@ void sendAck(const char *msgId, bool ok, const char *error = NULL)
   publishMqtt(ack_pTopic, buffer);
 }
 
+void handleOTA(bool isFilesystem)
+{
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.println("OTA failed: Not connected to Wi-Fi");
+    return;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure(); // Ignore SSL verification (suitable for testing)
+
+  Serial.println("***********************************");
+  Serial.println(isFilesystem ? ">>> start SPIFFS OTA <<<" : ">>> start FIRMWARE OTA <<<");
+
+  if (!isFilesystem)
+  {
+    // ----------------------------------------------------
+    // 1. update FIRMWARE (using httpUpdate)
+    // ----------------------------------------------------
+    Serial.print("Loading from: ");
+    Serial.println(firmware_url);
+
+    t_httpUpdate_return ret = httpUpdate.update(client, firmware_url);
+
+    switch (ret)
+    {
+    case HTTP_UPDATE_FAILED:
+      Serial.printf("Firmware OTA failed! Error (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
+      break;
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("No new firmware updates available on the server");
+      break;
+    case HTTP_UPDATE_OK:
+      Serial.println("Firmware update successful! Device is restarting...");
+      break;
+    }
+  }
+  else
+  {
+    // ----------------------------------------------------
+    // 2. update SPIFFS (using HTTPClient + Update Class)
+    // ----------------------------------------------------
+    Serial.print("Loading from: ");
+    Serial.println(filesystem_url);
+
+    HTTPClient http;
+    http.begin(client, filesystem_url);
+    int httpCode = http.GET();
+
+    if (httpCode == HTTP_CODE_OK)
+    {
+      int contentLength = http.getSize();
+      bool canBegin = Update.begin(contentLength, U_SPIFFS);
+
+      if (canBegin)
+      {
+        Serial.println("Loading file to SPIFFS, please wait...");
+        size_t written = Update.writeStream(http.getStream());
+
+        if (written == contentLength)
+        {
+          Serial.println("Data written successfully: ");
+          Serial.println(String(written));
+          Serial.println(" bytes");
+        }
+        else
+        {
+          Serial.println("Incomplete data written! Data may be lost in transit");
+        }
+
+        if (Update.end())
+        {
+          Serial.println("SPIFFS update successful! Restarting to apply new file...");
+          delay(1000);
+          ESP.restart();
+        }
+        else
+        {
+          Serial.println("Error occurred while ending the update process: ");
+          Serial.println(String(Update.getError()));
+        }
+      }
+      else
+      {
+        Serial.println("Not enough space to update SPIFFS");
+      }
+    }
+    else
+    {
+      Serial.printf("Failed to load SPIFFS! HTTP Code: %d\n", httpCode);
+    }
+    http.end();
+  }
+
+  Serial.println("***********************************");
+}
+
 void callback(char *topic, byte *payload, unsigned int length)
 {
   Serial.printf("Message arrived [%s] Content: ", topic);
@@ -324,6 +426,18 @@ void callback(char *topic, byte *payload, unsigned int length)
     {
       Serial.println("Action: Holding Door");
       targetBit = 10;
+    }
+    else if (strcmp(type, "otaFirmware") == 0)
+    {
+      Serial.println("Action: Start Firmware OTA");
+      handleOTA(false);
+      success = true;
+    }
+    else if (strcmp(type, "otaFilesystem") == 0)
+    {
+      Serial.println("Action: Start Filesystem OTA");
+      handleOTA(true); 
+      success = true;
     }
 
     if (targetBit != -1)
