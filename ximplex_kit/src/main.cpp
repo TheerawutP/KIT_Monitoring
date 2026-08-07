@@ -37,7 +37,7 @@ uint16_t hreg[8][16];
 uint16_t servo_data[8][16];
 
 // credential
-const char *ELEVATOR_ID = "E10"; // Hardcoded for now
+const char *ELEVATOR_ID = "UT26018"; // Hardcoded for now
 const char *DEVICE_SECRET = "ff112335";
 
 const char *ssid = "";
@@ -77,6 +77,7 @@ char X_prev[64] = "";
 char Y_prev[64] = "";
 
 char alarm_pTopic[128] = "";
+char servo_pTopic[128] = "";
 uint16_t prev_servo_alarm = 0xFFFF;
 char alarm_status_payload[16] = "AL000";
 bool alarmPublishPending = false;
@@ -84,7 +85,7 @@ bool alarmPublishPending = false;
 bool XY_hasChanged = true;
 bool mqttPublishPending = true;
 bool firebasePublishPending = true;
-uint32_t ChangeSlaveInterval = 500;
+uint32_t ChangeSlaveInterval = 200;
 
 // 1. mapping reg
 struct ServoLiveReadings
@@ -192,7 +193,7 @@ bool setupmTLS()
   // ตรวจสอบว่าอ่านไฟล์สำเร็จหรือไม่
   if (caCertContent == "" || clientCertContent == "" || clientKeyContent == "")
   {
-    Serial.println("❌ mTLS Setup Failed: Missing cert/key files in SPIFFS!");
+    Serial.println("mTLS Setup Failed: Missing cert/key files in SPIFFS!");
     return false;
   }
 
@@ -201,7 +202,7 @@ bool setupmTLS()
   wifiClient.setCertificate(clientCertContent.c_str());
   wifiClient.setPrivateKey(clientKeyContent.c_str());
 
-  Serial.println("🔒 mTLS Certificates loaded successfully!");
+  Serial.println("mTLS Certificates loaded successfully!");
   return true;
 }
 
@@ -364,7 +365,7 @@ void setupMQTT()
   mqttClient.setBufferSize(512);
 }
 
-void isChange(const char *from, uint16_t *data, bool *flag)
+bool isChange(const char *from, uint16_t *data)
 {
   char X_temp[64];
   char Y_temp[64];
@@ -387,7 +388,6 @@ void isChange(const char *from, uint16_t *data, bool *flag)
 
     if (strcmp(X_temp, X_prev) != 0 || strcmp(Y_temp, Y_prev) != 0)
     {
-      *flag = true;
       setPublishPending();
 
       strncpy(X_prev, X_temp, sizeof(X_prev));
@@ -401,8 +401,11 @@ void isChange(const char *from, uint16_t *data, bool *flag)
       Serial.println(X_status_payload);
       Serial.print("Y Mask: ");
       Serial.println(Y_status_payload);
+
+      return true;
     }
   }
+  return false;
 }
 
 void updateTopicFromPrefs(const char *key, char *buffer, size_t bufferSize)
@@ -451,6 +454,22 @@ bool buildStatePayload(char *buffer, size_t bufferSize)
   live["igbt_temp_c"] = g_servoLive.igbt_temp;
   live["bus_voltage"] = g_servoLive.bus_voltage;
   live["status_flags"] = g_servoLive.status_flags;
+  size_t len = serializeJson(doc, buffer, bufferSize);
+  return len > 0;
+}
+
+bool buildServoPayload(char *buffer, size_t bufferSize)
+{
+  if (!buffer || bufferSize == 0)
+    return false;
+
+  StaticJsonDocument<512> doc;
+  doc["speed_rpm"] = g_servoLive.speed_rpm;
+  doc["avg_load_pct"] = g_servoLive.avg_load_pct;
+  doc["peak_load_pct"] = g_servoLive.peak_load_pct;
+  doc["igbt_temp_c"] = g_servoLive.igbt_temp;
+  doc["bus_voltage"] = g_servoLive.bus_voltage;
+  doc["status_flags"] = g_servoLive.status_flags;
   size_t len = serializeJson(doc, buffer, bufferSize);
   return len > 0;
 }
@@ -540,10 +559,14 @@ bool readDataFrom(uint8_t slaveID, uint16_t startAddress, uint8_t numRead, uint1
 void vPollingTask(void *pvParams)
 {
   const uint16_t SERVO_ALARM_ADDR = 0x0002;
+  const uint32_t FAST_INTERVAL = 200;
+  const uint32_t SLOW_INTERVAL = 2000;
+  const uint32_t IDLE_TIMEOUT = 60000; // 60 sec
+  static uint32_t lastStateChangeTime = millis();
 
   for (;;)
   {
-    if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(200)) == pdTRUE)
+    if (xSemaphoreTake(modbusMutex, pdMS_TO_TICKS(100)) == pdTRUE)
     {
       switch (curr_slave)
       {
@@ -552,7 +575,18 @@ void vPollingTask(void *pvParams)
         {
           if (xSemaphoreTake(hasChangedMutex, pdMS_TO_TICKS(50)) == pdTRUE)
           {
-            isChange("PLC", hreg[PLC_slaveID], &XY_hasChanged);
+
+            if (isChange("PLC", hreg[PLC_slaveID]))
+            {
+              XY_hasChanged = true;
+              lastStateChangeTime = millis();
+              ChangeSlaveInterval = FAST_INTERVAL;
+            }
+            else if (millis() - lastStateChangeTime >= IDLE_TIMEOUT)
+            {
+              ChangeSlaveInterval = SLOW_INTERVAL;
+            }
+
             xSemaphoreGive(hasChangedMutex);
           }
         }
@@ -608,7 +642,7 @@ void vPollingTask(void *pvParams)
             anyReadFailed = true;
             Serial.printf("Failed to read Servo register: 0x%04X\n", addr);
           }
-          vTaskDelay(pdMS_TO_TICKS(100));
+          vTaskDelay(pdMS_TO_TICKS(20));
         }
 
         // check alarm if changed
@@ -639,13 +673,14 @@ void vPollingTask(void *pvParams)
 void vPublishTask(void *pvParams)
 {
 
-  const unsigned long STATE_PUBLISH_INTERVAL = 3000;
-  unsigned long lastStatePublishTime = 0;
+  const unsigned long SERVO_PUBLISH_INTERVAL = 2000;
+  unsigned long lastServoPublishTime = 0;
 
   for (;;)
   {
     bool shouldPublishState = false;
     bool shouldPublishAlarm = false;
+    bool shouldPublishServo = false;
     unsigned long now = millis();
 
     if (xSemaphoreTake(hasChangedMutex, portMAX_DELAY) == pdTRUE)
@@ -663,10 +698,10 @@ void vPublishTask(void *pvParams)
       xSemaphoreGive(hasChangedMutex);
     }
 
-    if (now - lastStatePublishTime >= STATE_PUBLISH_INTERVAL)
+    if (now - lastServoPublishTime >= SERVO_PUBLISH_INTERVAL)
     {
-      shouldPublishState = true;
-      lastStatePublishTime = now;
+      shouldPublishServo = true;
+      lastServoPublishTime = now;
     }
 
     if (shouldPublishState)
@@ -677,6 +712,17 @@ void vPublishTask(void *pvParams)
         publishMqtt(all_status_pTopic, statePayload);
         Serial.print("Published State to MQTT: ");
         Serial.println(statePayload);
+      }
+    }
+
+    if (shouldPublishServo)
+    {
+      char servoPayload[512];
+      if (buildServoPayload(servoPayload, sizeof(servoPayload)))
+      {
+        publishMqtt(servo_pTopic, servoPayload);
+        Serial.print("Published Servo Data to MQTT: ");
+        Serial.println(servoPayload);
       }
     }
 
@@ -691,7 +737,7 @@ void vPublishTask(void *pvParams)
       }
     }
 
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(20));
   }
 }
 
@@ -1486,6 +1532,7 @@ void setup()
   snprintf(ack_pTopic, sizeof(ack_pTopic), "elevator/%s/ack", ELEVATOR_ID);
   snprintf(all_status_pTopic, sizeof(all_status_pTopic), "elevator/%s/state", ELEVATOR_ID);
   snprintf(alarm_pTopic, sizeof(alarm_pTopic), "elevator/%s/alarm", ELEVATOR_ID);
+  snprintf(servo_pTopic, sizeof(servo_pTopic), "elevator/%s/servo", ELEVATOR_ID);
 
   // Legacy topics (Optional fallback, but prioritizing new ones)
   strncpy(X_pTopic, DEFAULT_X_PTOPIC, sizeof(X_pTopic) - 1);
